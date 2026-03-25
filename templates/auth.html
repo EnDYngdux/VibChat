@@ -1,0 +1,212 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>VibChat – {{ 'Đăng nhập' if mode == 'login' else 'Đăng ký' }}</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Syne:wght@400;700;800&family=DM+Sans:wght@300;400;500&display=swap" rel="stylesheet">
+<style>
+  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+  :root {
+    --bg: #0d0d0f;
+    --surface: #18181c;
+    --border: #2a2a30;
+    --accent: #7c6ef0;
+    --accent2: #f06090;
+    --text: #f0f0f4;
+    --muted: #8888a0;
+    --input-bg: #222228;
+    --radius: 14px;
+  }
+
+  body {
+    background: var(--bg);
+    color: var(--text);
+    font-family: 'DM Sans', sans-serif;
+    min-height: 100vh;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    overflow: hidden;
+  }
+
+  .bg-blobs {
+    position: fixed; inset: 0; z-index: 0; pointer-events: none;
+  }
+  .blob {
+    position: absolute;
+    border-radius: 50%;
+    filter: blur(80px);
+    opacity: 0.18;
+    animation: float 8s ease-in-out infinite alternate;
+  }
+  .blob1 { width: 500px; height: 500px; background: var(--accent); top: -150px; left: -100px; }
+  .blob2 { width: 400px; height: 400px; background: var(--accent2); bottom: -100px; right: -80px; animation-delay: -4s; }
+  .blob3 { width: 300px; height: 300px; background: #50e0c0; top: 40%; left: 60%; animation-delay: -2s; }
+  @keyframes float { from { transform: translateY(0) scale(1); } to { transform: translateY(-30px) scale(1.05); } }
+
+  .card {
+    position: relative; z-index: 1;
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 24px;
+    padding: 48px 44px;
+    width: 420px;
+    max-width: 95vw;
+    box-shadow: 0 30px 80px rgba(0,0,0,0.5);
+    animation: slideUp 0.5s cubic-bezier(.22,.68,0,1.2);
+  }
+  @keyframes slideUp { from { opacity:0; transform:translateY(30px); } to { opacity:1; transform:translateY(0); } }
+
+  .logo {
+    font-family: 'Syne', sans-serif;
+    font-weight: 800;
+    font-size: 2rem;
+    background: linear-gradient(135deg, var(--accent), var(--accent2));
+    -webkit-background-clip: text;
+    -webkit-text-fill-color: transparent;
+    background-clip: text;
+    margin-bottom: 6px;
+  }
+  .tagline { color: var(--muted); font-size: 0.9rem; margin-bottom: 36px; }
+
+  h2 {
+    font-family: 'Syne', sans-serif;
+    font-size: 1.35rem;
+    font-weight: 700;
+    margin-bottom: 24px;
+  }
+
+  .field { margin-bottom: 18px; }
+  label { display: block; font-size: 0.8rem; color: var(--muted); margin-bottom: 7px; letter-spacing: 0.05em; text-transform: uppercase; }
+  input {
+    width: 100%;
+    background: var(--input-bg);
+    border: 1.5px solid var(--border);
+    border-radius: var(--radius);
+    padding: 13px 16px;
+    color: var(--text);
+    font-family: 'DM Sans', sans-serif;
+    font-size: 0.95rem;
+    transition: border-color 0.2s, box-shadow 0.2s;
+    outline: none;
+  }
+  input:focus {
+    border-color: var(--accent);
+    box-shadow: 0 0 0 3px rgba(124,110,240,0.15);
+  }
+
+  .btn {
+    width: 100%;
+    padding: 14px;
+    background: linear-gradient(135deg, var(--accent), var(--accent2));
+    border: none;
+    border-radius: var(--radius);
+    color: #fff;
+    font-family: 'Syne', sans-serif;
+    font-weight: 700;
+    font-size: 1rem;
+    cursor: pointer;
+    margin-top: 8px;
+    transition: opacity 0.2s, transform 0.1s;
+    letter-spacing: 0.02em;
+  }
+  .btn:hover { opacity: 0.9; }
+  .btn:active { transform: scale(0.98); }
+  .btn:disabled { opacity: 0.5; cursor: not-allowed; }
+
+  .error-msg {
+    background: rgba(240,96,144,0.12);
+    border: 1px solid rgba(240,96,144,0.3);
+    color: #f06090;
+    border-radius: 10px;
+    padding: 10px 14px;
+    font-size: 0.88rem;
+    margin-bottom: 16px;
+    display: none;
+  }
+
+  .switch {
+    text-align: center;
+    margin-top: 24px;
+    color: var(--muted);
+    font-size: 0.9rem;
+  }
+  .switch a { color: var(--accent); text-decoration: none; font-weight: 500; }
+  .switch a:hover { text-decoration: underline; }
+</style>
+</head>
+<body>
+<div class="bg-blobs">
+  <div class="blob blob1"></div>
+  <div class="blob blob2"></div>
+  <div class="blob blob3"></div>
+</div>
+<div class="card">
+  <div class="logo">VibChat</div>
+  <div class="tagline">Kết nối. Trò chuyện. Vui vẻ.</div>
+  <h2>{{ 'Chào mừng trở lại 👋' if mode == 'login' else 'Tạo tài khoản mới ✨' }}</h2>
+  <div class="error-msg" id="errMsg"></div>
+  <div class="field">
+    <label>Tên đăng nhập</label>
+    <input type="text" id="username" placeholder="nhập tên..." autocomplete="username">
+  </div>
+  <div class="field">
+    <label>Mật khẩu</label>
+    <input type="password" id="password" placeholder="••••••••" autocomplete="{{ 'current-password' if mode == 'login' else 'new-password' }}">
+  </div>
+  <button class="btn" id="submitBtn" onclick="submit()">
+    {{ 'Đăng nhập' if mode == 'login' else 'Đăng ký' }}
+  </button>
+  <div class="switch">
+    {% if mode == 'login' %}
+      Chưa có tài khoản? <a href="/register">Đăng ký ngay</a>
+    {% else %}
+      Đã có tài khoản? <a href="/login">Đăng nhập</a>
+    {% endif %}
+  </div>
+</div>
+<script>
+  const mode = '{{ mode }}';
+  document.addEventListener('keydown', e => { if (e.key === 'Enter') submit(); });
+
+  async function submit() {
+    const username = document.getElementById('username').value.trim();
+    const password = document.getElementById('password').value;
+    const btn = document.getElementById('submitBtn');
+    const err = document.getElementById('errMsg');
+    err.style.display = 'none';
+    if (!username || !password) { showErr('Vui lòng điền đầy đủ thông tin'); return; }
+    btn.disabled = true;
+    btn.textContent = 'Đang xử lý...';
+    try {
+      const res = await fetch(mode === 'login' ? '/login' : '/register', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ username, password })
+      });
+      const data = await res.json();
+      if (data.ok) {
+        window.location.href = '/';
+      } else {
+        showErr(data.error || 'Có lỗi xảy ra');
+        btn.disabled = false;
+        btn.textContent = mode === 'login' ? 'Đăng nhập' : 'Đăng ký';
+      }
+    } catch {
+      showErr('Lỗi kết nối server');
+      btn.disabled = false;
+      btn.textContent = mode === 'login' ? 'Đăng nhập' : 'Đăng ký';
+    }
+  }
+
+  function showErr(msg) {
+    const el = document.getElementById('errMsg');
+    el.textContent = msg;
+    el.style.display = 'block';
+  }
+</script>
+</body>
+</html>
