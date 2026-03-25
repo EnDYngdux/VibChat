@@ -1140,18 +1140,14 @@ socket.on('read_update', (data) => {
   }
 });
 
-// Mark read when opening room
-const _origOpenRoom = openRoom;
-async function openRoom(room) {
-  await _origOpenRoom(room);
-  // mark read after messages loaded
-  setTimeout(() => {
-    const wrap = document.getElementById('msgsWrap');
-    const lastBubble = wrap?.querySelector('.bubble:last-of-type');
-    const lastId = lastBubble ? +lastBubble.dataset.id : 0;
-    if (lastId) socket.emit('mark_read', { room_id: room.id, msg_id: lastId });
-  }, 500);
-}
+// Browser notification
+if (Notification.permission === 'default') Notification.requestPermission();
+socket.on('new_message', (msg) => {
+  if (currentRoom && msg.room_id === currentRoom.id) return;
+  if (Notification.permission === 'granted' && document.hidden) {
+    new Notification(`VibChat - ${msg.username}`, { body: msg.content, icon: '/static/icon.png' });
+  }
+});
 
 // Override appendMessage to add context menu & unread
 const _origAppendMessage = appendMessage;
@@ -1170,15 +1166,6 @@ function appendMessage(m, prevUserId, scroll) {
     socket.emit('mark_read', { room_id: currentRoom.id, msg_id: m.id });
   }
 }
-
-// Browser notification
-if (Notification.permission === 'default') Notification.requestPermission();
-socket.on('new_message', (msg) => {
-  if (currentRoom && msg.room_id === currentRoom.id) return;
-  if (Notification.permission === 'granted' && document.hidden) {
-    new Notification(`VibChat - ${msg.username}`, { body: msg.content, icon: '/static/icon.png' });
-  }
-});
 
 init();
 </script>
