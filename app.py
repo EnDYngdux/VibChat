@@ -241,7 +241,7 @@ def get_users():
 def get_or_create_dm(other_id):
     if 'user_id' not in session:
         return jsonify({'error': 'Unauthorized'}), 401
-    me = session['user_id']
+    me_id = session['user_id']
     with get_db() as db:
         # Find existing DM room between these 2 users
         existing = db.execute('''
@@ -249,16 +249,18 @@ def get_or_create_dm(other_id):
             WHERE r.type = 'dm'
             AND r.id IN (SELECT room_id FROM room_members WHERE user_id = ?)
             AND r.id IN (SELECT room_id FROM room_members WHERE user_id = ?)
-        ''', (me, other_id)).fetchone()
+        ''', (me_id, other_id)).fetchone()
         if existing:
             return jsonify({'id': existing['id'], 'name': existing['name'], 'type': 'dm'})
-        # Create new DM room
+        # Get both users
         other = db.execute('SELECT username FROM users WHERE id = ?', (other_id,)).fetchone()
-        my = db.execute('SELECT username FROM users WHERE id = ?', (me,)).fetchone()
+        my = db.execute('SELECT username FROM users WHERE id = ?', (me_id,)).fetchone()
+        if not other or not my:
+            return jsonify({'error': 'User not found'}), 404
         room_name = f"{my['username']},{other['username']}"
-        cur = db.execute('INSERT INTO rooms (name, type, created_by) VALUES (?, ?, ?)', (room_name, 'dm', me))
+        cur = db.execute('INSERT INTO rooms (name, type, created_by) VALUES (?, ?, ?)', (room_name, 'dm', me_id))
         room_id = cur.lastrowid
-        db.execute('INSERT INTO room_members (room_id, user_id) VALUES (?, ?)', (room_id, me))
+        db.execute('INSERT INTO room_members (room_id, user_id) VALUES (?, ?)', (room_id, me_id))
         db.execute('INSERT INTO room_members (room_id, user_id) VALUES (?, ?)', (room_id, other_id))
         db.commit()
     return jsonify({'id': room_id, 'name': room_name, 'type': 'dm'})
