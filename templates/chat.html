@@ -787,20 +787,32 @@ function appendMessage(m, prevUserId = null, scroll = true) {
   } else if (m.type === 'sticker') {
     bubbleContent = `<div class="bubble sticker-bubble" data-id="${m.id}">${escHtml(m.content)}</div>`;
   } else {
-    bubbleContent = `<div class="bubble" data-id="${m.id}">${escHtml(m.content)}</div>`;
+    bubbleContent = `<div class="bubble${m.deleted ? ' deleted' : ''}" data-id="${m.id}">${escHtml(m.content)}</div>`;
   }
 
   const t = new Date(m.created_at).toLocaleTimeString('vi-VN', { hour: '2-digit', minute: '2-digit' });
   row.innerHTML = bubbleContent + `<div class="msg-time">${t}</div>`;
 
+  const bubble = row.querySelector('.bubble');
   // Click to react
-  row.querySelector('.bubble').addEventListener('click', (e) => showReactPicker(e, m.id));
+  bubble.addEventListener('click', (e) => showReactPicker(e, m.id));
+  // Right-click context menu
+  bubble.addEventListener('contextmenu', (e) => showCtxMenu(e, m.id, isMe));
 
   group.appendChild(row);
 
   // Reactions
   if (reactions.length > 0) {
     renderReactionsFor(m.id, reactions, group);
+  }
+
+  // Mark read & unread badge
+  if (scroll && currentRoom && m.room_id === currentRoom.id) {
+    socket.emit('mark_read', { room_id: currentRoom.id, msg_id: m.id });
+  }
+  if (scroll && (!currentRoom || m.room_id !== currentRoom.id)) {
+    unreadCounts[m.room_id] = (unreadCounts[m.room_id] || 0) + 1;
+    renderRooms(rooms);
   }
 
   if (scroll) scrollBottom();
@@ -1149,23 +1161,6 @@ socket.on('new_message', (msg) => {
   }
 });
 
-// Override appendMessage to add context menu & unread
-const _origAppendMessage = appendMessage;
-function appendMessage(m, prevUserId, scroll) {
-  _origAppendMessage(m, prevUserId, scroll);
-  // Add context menu to bubble
-  const bubble = document.querySelector(`[data-id="${m.id}"]`);
-  if (bubble) {
-    const isMe = m.user_id === me.id;
-    bubble.addEventListener('contextmenu', (e) => showCtxMenu(e, m.id, isMe));
-  }
-  // Notify unread
-  if (scroll !== false) addUnread(m.room_id);
-  // Mark read
-  if (currentRoom && m.room_id === currentRoom.id) {
-    socket.emit('mark_read', { room_id: currentRoom.id, msg_id: m.id });
-  }
-}
 
 init();
 </script>
