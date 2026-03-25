@@ -14,7 +14,16 @@ ALLOWED_EXTENSIONS = {'png', 'jpg', 'jpeg', 'gif', 'webp'}
 app.config['UPLOAD_FOLDER'] = UPLOAD_FOLDER
 app.config['MAX_CONTENT_LENGTH'] = 16 * 1024 * 1024  # 16MB
 
+import os
+
 DB_PATH = 'messenger.db'
+
+# Reset DB if env variable set
+if os.environ.get('RESET_DB') == '1':
+    try:
+        os.remove(DB_PATH)
+    except:
+        pass
 
 # ─── DATABASE ─────────────────────────────────────────────────────────────────
 
@@ -243,12 +252,13 @@ def get_or_create_dm(other_id):
         return jsonify({'error': 'Unauthorized'}), 401
     me_id = session['user_id']
     with get_db() as db:
-        # Find existing DM room between these 2 users
+        # Find existing DM room between EXACTLY these 2 users
         existing = db.execute('''
             SELECT r.id, r.name FROM rooms r
             WHERE r.type = 'dm'
             AND r.id IN (SELECT room_id FROM room_members WHERE user_id = ?)
             AND r.id IN (SELECT room_id FROM room_members WHERE user_id = ?)
+            AND (SELECT COUNT(*) FROM room_members WHERE room_id = r.id) = 2
         ''', (me_id, other_id)).fetchone()
         if existing:
             return jsonify({'id': existing['id'], 'name': existing['name'], 'type': 'dm'})
