@@ -77,6 +77,24 @@ body { font-family: var(--font); background: var(--bg); color: var(--text); }
 }
 .new-room-btn:hover { background: var(--accent); color: #fff; }
 
+/* ─── TABS ─── */
+.sidebar-tabs {
+  display: flex; border-bottom: 1px solid var(--border);
+}
+.sidebar-tab {
+  flex: 1; padding: 10px; background: none; border: none;
+  color: var(--muted); font-family: var(--font); font-size: 0.85rem;
+  font-weight: 600; cursor: pointer; border-bottom: 2px solid transparent;
+  transition: all 0.2s;
+}
+.sidebar-tab.active { color: var(--accent); border-bottom-color: var(--accent); }
+
+.dm-badge {
+  display: inline-block; background: var(--accent2);
+  color: #fff; border-radius: 10px; font-size: 0.7rem;
+  padding: 1px 6px; margin-left: 4px;
+}
+
 .search-wrap { padding: 12px 14px; }
 .search-input {
   width: 100%;
@@ -415,10 +433,15 @@ body { font-family: var(--font); background: var(--bg); color: var(--text); }
       <div class="logo">VibChat</div>
       <button class="new-room-btn" onclick="showNewRoomModal()" title="Tạo phòng mới">＋</button>
     </div>
+    <div class="sidebar-tabs">
+      <button class="sidebar-tab active" id="tabRooms" onclick="switchTab('rooms')">💬 Phòng</button>
+      <button class="sidebar-tab" id="tabDM" onclick="switchTab('dm')">👤 Nhắn riêng</button>
+    </div>
     <div class="search-wrap">
-      <input class="search-input" placeholder="🔍 Tìm phòng..." oninput="filterRooms(this.value)">
+      <input class="search-input" id="searchInput" placeholder="🔍 Tìm..." oninput="handleSearch(this.value)">
     </div>
     <div class="rooms-list" id="roomsList"></div>
+    <div class="rooms-list" id="usersList" style="display:none"></div>
     <div class="sidebar-footer">
       <div class="user-avatar" id="myAvatar">?</div>
       <div class="user-name" id="myName">...</div>
@@ -476,6 +499,7 @@ let rooms = [];
 let stickers = {};
 let activeStickerPack = null;
 let reactTargetMsg = null;
+let online_users = {};
 
 // ─── INIT ───────────────────────────────────────────────────────────────────
 
@@ -518,6 +542,69 @@ function filterRooms(q) {
   renderRooms(filtered);
 }
 
+// ─── TABS ─────────────────────────────────────────────────────────────────
+
+let currentTab = 'rooms';
+let users = [];
+
+function switchTab(tab) {
+  currentTab = tab;
+  document.getElementById('tabRooms').classList.toggle('active', tab === 'rooms');
+  document.getElementById('tabDM').classList.toggle('active', tab === 'dm');
+  document.getElementById('roomsList').style.display = tab === 'rooms' ? '' : 'none';
+  document.getElementById('usersList').style.display = tab === 'dm' ? '' : 'none';
+  document.getElementById('searchInput').placeholder = tab === 'rooms' ? '🔍 Tìm phòng...' : '🔍 Tìm người...';
+  if (tab === 'dm') loadUsers();
+}
+
+async function loadUsers() {
+  const res = await fetch('/api/users');
+  users = await res.json();
+  renderUsers(users);
+}
+
+function renderUsers(list) {
+  const el = document.getElementById('usersList');
+  el.innerHTML = '';
+  if (list.length === 0) {
+    el.innerHTML = '<div style="text-align:center;color:var(--muted);padding:20px;font-size:0.85rem;">Chưa có người dùng nào khác</div>';
+    return;
+  }
+  list.forEach(u => {
+    const item = document.createElement('div');
+    item.className = 'room-item';
+    const isOnline = Object.values(online_users).includes(u.username);
+    item.innerHTML = `
+      <div class="room-avatar" style="background:linear-gradient(135deg,#f06090,#7c6ef0)">${u.username[0].toUpperCase()}</div>
+      <div class="room-info">
+        <div class="room-name">${escHtml(u.username)}</div>
+        <div class="room-preview" style="color:${isOnline ? '#4cdb7a' : 'var(--muted)'}">
+          ${isOnline ? '🟢 Online' : '⚫ Offline'}
+        </div>
+      </div>`;
+    item.onclick = () => openDM(u);
+    el.appendChild(item);
+  });
+}
+
+async function openDM(user) {
+  const res = await fetch(`/api/dm/${user.id}`);
+  const room = await res.json();
+  // Show display name as the other person's name
+  room.displayName = user.username;
+  room.isDM = true;
+  openRoom(room);
+}
+
+function handleSearch(q) {
+  if (currentTab === 'rooms') {
+    filterRooms(q);
+  } else {
+    const filtered = q ? users.filter(u => u.username.toLowerCase().includes(q.toLowerCase())) : users;
+    renderUsers(filtered);
+  }
+}
+
 // ─── OPEN ROOM ───────────────────────────────────────────────────────────────
 
 async function openRoom(room) {
@@ -528,12 +615,14 @@ async function openRoom(room) {
     el.classList.toggle('active', +el.dataset.id === room.id);
   });
 
+  const displayName = room.isDM ? room.displayName : room.name;
+
   const chatArea = document.getElementById('chatArea');
   chatArea.innerHTML = `
     <div class="chat-header">
-      <div class="chat-room-avatar">${room.name[0].toUpperCase()}</div>
+      <div class="chat-room-avatar">${displayName[0].toUpperCase()}</div>
       <div class="chat-room-info">
-        <div class="chat-room-name">${escHtml(room.name)}</div>
+        <div class="chat-room-name">${escHtml(displayName)}${room.isDM ? ' <span style="font-size:0.75rem;color:var(--muted);font-weight:400">· Tin nhắn riêng</span>' : ''}</div>
         <div class="chat-room-status"><span class="online-count" id="onlineCount">0</span> online</div>
       </div>
     </div>
@@ -801,9 +890,12 @@ socket.on('user_typing', (data) => {
   }
 });
 
-socket.on('online_users', (users) => {
+socket.on('online_users', (users_list) => {
+  online_users = {};
+  users_list.forEach(u => online_users[u] = u);
   const el = document.getElementById('onlineCount');
-  if (el) el.textContent = users.length;
+  if (el) el.textContent = users_list.length;
+  if (currentTab === 'dm') renderUsers(users);
 });
 
 // ─── ROOMS ────────────────────────────────────────────────────────────────

@@ -215,6 +215,40 @@ def upload_file():
         return jsonify({'url': f'/static/uploads/{filename}'})
     return jsonify({'error': 'File không hợp lệ'}), 400
 
+@app.route('/api/users')
+def get_users():
+    if 'user_id' not in session:
+        return jsonify({'error': 'Unauthorized'}), 401
+    with get_db() as db:
+        users = db.execute('SELECT id, username FROM users WHERE id != ? ORDER BY username', (session['user_id'],)).fetchall()
+    return jsonify([dict(u) for u in users])
+
+@app.route('/api/dm/<int:other_id>')
+def get_or_create_dm(other_id):
+    if 'user_id' not in session:
+        return jsonify({'error': 'Unauthorized'}), 401
+    me = session['user_id']
+    with get_db() as db:
+        # Find existing DM room between these 2 users
+        existing = db.execute('''
+            SELECT r.id, r.name FROM rooms r
+            WHERE r.type = 'dm'
+            AND r.id IN (SELECT room_id FROM room_members WHERE user_id = ?)
+            AND r.id IN (SELECT room_id FROM room_members WHERE user_id = ?)
+        ''', (me, other_id)).fetchone()
+        if existing:
+            return jsonify({'id': existing['id'], 'name': existing['name'], 'type': 'dm'})
+        # Create new DM room
+        other = db.execute('SELECT username FROM users WHERE id = ?', (other_id,)).fetchone()
+        my = db.execute('SELECT username FROM users WHERE id = ?', (me,)).fetchone()
+        room_name = f"{my['username']},{other['username']}"
+        cur = db.execute('INSERT INTO rooms (name, type, created_by) VALUES (?, ?, ?)', (room_name, 'dm', me))
+        room_id = cur.lastrowid
+        db.execute('INSERT INTO room_members (room_id, user_id) VALUES (?, ?)', (room_id, me))
+        db.execute('INSERT INTO room_members (room_id, user_id) VALUES (?, ?)', (room_id, other_id))
+        db.commit()
+    return jsonify({'id': room_id, 'name': room_name, 'type': 'dm'})
+
 @app.route('/api/stickers')
 def get_stickers():
     # Return built-in emoji sticker packs
