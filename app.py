@@ -52,6 +52,8 @@ def init_db():
                 user_id INTEGER NOT NULL,
                 content TEXT,
                 type TEXT DEFAULT 'text',
+                deleted INTEGER DEFAULT 0,
+                pinned INTEGER DEFAULT 0,
                 created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
             );
             CREATE TABLE IF NOT EXISTS reactions (
@@ -60,7 +62,19 @@ def init_db():
                 emoji TEXT,
                 PRIMARY KEY (message_id, user_id)
             );
+            CREATE TABLE IF NOT EXISTS read_receipts (
+                room_id INTEGER,
+                user_id INTEGER,
+                last_read_msg_id INTEGER,
+                PRIMARY KEY (room_id, user_id)
+            );
         ''')
+        # Add columns if upgrading old DB
+        try: db.execute('ALTER TABLE messages ADD COLUMN deleted INTEGER DEFAULT 0')
+        except: pass
+        try: db.execute('ALTER TABLE messages ADD COLUMN pinned INTEGER DEFAULT 0')
+        except: pass
+        db.commit()
         # Seed default rooms
         existing = db.execute('SELECT COUNT(*) as c FROM rooms').fetchone()['c']
         if existing == 0:
@@ -341,6 +355,59 @@ def on_typing(data):
     room_id = str(data.get('room_id'))
     emit('user_typing', {'username': session.get('username'), 'typing': data.get('typing')},
          room=room_id, include_self=False)
+
+@socketio.on('delete_message')
+def on_delete(data):
+    if 'user_id' not in session:
+        return
+    msg_id = data['message_id']
+    room_id = data['room_id']
+    with get_db() as db:
+        msg = db.execute('SELECT user_id FROM messages WHERE id=?', (msg_id,)).fetchone()
+        if not msg or msg['user_id'] != session['user_id']:
+            return
+        db.execute('UPDATE messages SET deleted=1, content="Tin nhắn đã bị xoá" WHERE id=?', (msg_id,))
+        db.commit()
+    emit('message_deleted', {'message_id': msg_id}, room=str(room_id))
+
+@socketio.on('pin_message')
+def on_pin(data):
+    if 'user_id' not in session:
+        return
+    msg_id = data['message_id']
+    room_id = data['room_id']
+    with get_db() as db:
+        msg = db.execute('SELECT pinned FROM messages WHERE id=?', (msg_id,)).fetchone()
+        if not msg:
+            return
+        new_pin = 0 if msg['pinned'] else 1
+        db.execute('UPDATE messages SET pinned=? WHERE id=?', (new_pin, msg_id))
+        db.commit()
+        pinned = db.execute('''SELECT m.id, m.content, m.type, u.username
+                               FROM messages m JOIN users u ON u.id=m.user_id
+                               WHERE m.room_id=? AND m.pinned=1 ORDER BY m.id DESC LIMIT 1''',
+                            (room_id,)).fetchone()
+    emit('pin_update', {
+        'room_id': room_id,
+        'pinned': dict(pinned) if pinned else None
+    }, room=str(room_id))
+
+@socketio.on('mark_read')
+def on_mark_read(data):
+    if 'user_id' not in session:
+        return
+    room_id = data['room_id']
+    msg_id = data.get('msg_id', 0)
+    with get_db() as db:
+        db.execute('INSERT OR REPLACE INTO read_receipts (room_id, user_id, last_read_msg_id) VALUES (?,?,?)',
+                   (room_id, session['user_id'], msg_id))
+        db.commit()
+    emit('read_update', {
+        'room_id': room_id,
+        'user_id': session['user_id'],
+        'username': session['username'],
+        'msg_id': msg_id
+    }, room=str(room_id))
 
 if __name__ == '__main__':
     socketio.run(app, debug=True, host='0.0.0.0', port=5000)

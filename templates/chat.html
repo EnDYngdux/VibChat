@@ -266,6 +266,76 @@ body { font-family: var(--font); background: var(--bg); color: var(--text); }
 .typing-dots span:nth-child(3) { animation-delay: 0.4s; }
 @keyframes typingBounce { 0%,60%,100%{transform:translateY(0)} 30%{transform:translateY(-6px)} }
 
+/* ─── PINNED MESSAGE ─── */
+.pinned-bar {
+  padding: 8px 20px;
+  background: rgba(124,110,240,0.08);
+  border-bottom: 1px solid rgba(124,110,240,0.2);
+  display: flex; align-items: center; gap: 8px;
+  font-size: 0.82rem; color: var(--muted);
+  cursor: pointer; transition: background 0.2s;
+}
+.pinned-bar:hover { background: rgba(124,110,240,0.15); }
+.pinned-bar .pin-icon { color: var(--accent); }
+.pinned-bar .pin-content { flex: 1; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; color: var(--text); }
+
+/* ─── READ RECEIPTS ─── */
+.read-receipt { font-size: 0.7rem; color: var(--accent); padding: 0 4px; }
+
+/* ─── DELETED MSG ─── */
+.bubble.deleted { opacity: 0.5; font-style: italic; color: var(--muted) !important; }
+
+/* ─── MSG CONTEXT MENU ─── */
+.ctx-menu {
+  position: fixed; z-index: 999;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 14px;
+  padding: 6px;
+  box-shadow: 0 8px 30px rgba(0,0,0,0.5);
+  animation: fadeIn 0.15s ease;
+  min-width: 160px;
+}
+.ctx-item {
+  display: flex; align-items: center; gap: 8px;
+  padding: 8px 12px; border-radius: 10px;
+  cursor: pointer; font-size: 0.88rem;
+  transition: background 0.15s; border: none;
+  background: none; color: var(--text); width: 100%; text-align: left;
+}
+.ctx-item:hover { background: var(--surface2); }
+.ctx-item.danger { color: var(--accent2); }
+
+/* ─── THEME TOGGLE ─── */
+.theme-btn {
+  background: none; border: none; color: var(--muted);
+  cursor: pointer; padding: 6px; border-radius: 8px;
+  font-size: 1rem; transition: color 0.2s;
+}
+.theme-btn:hover { color: var(--text); }
+
+/* ─── NOTIFICATION BADGE ─── */
+.notif-badge {
+  display: inline-flex; align-items: center; justify-content: center;
+  background: var(--accent2); color: #fff;
+  border-radius: 50%; width: 18px; height: 18px;
+  font-size: 0.7rem; font-weight: 700;
+  position: absolute; top: -4px; right: -4px;
+}
+.room-item { position: relative; }
+
+/* ─── LIGHT THEME ─── */
+body.light {
+  --bg: #f0f0f5;
+  --sidebar: #ffffff;
+  --surface: #f8f8fc;
+  --surface2: #ebebf3;
+  --border: #dddde8;
+  --text: #1a1a2e;
+  --muted: #6666880;
+  --bubble-them: #e8e8f0;
+}
+
 /* ─── INPUT AREA ─── */
 .input-area {
   padding: 14px 20px;
@@ -431,6 +501,7 @@ body { font-family: var(--font); background: var(--bg); color: var(--text); }
   <aside class="sidebar">
     <div class="sidebar-header">
       <div class="logo">VibChat</div>
+      <button class="theme-btn" onclick="toggleTheme()" title="Đổi giao diện">🌙</button>
       <button class="new-room-btn" onclick="showNewRoomModal()" title="Tạo phòng mới">＋</button>
     </div>
     <div class="sidebar-tabs">
@@ -489,6 +560,13 @@ body { font-family: var(--font); background: var(--bg); color: var(--text); }
 </div>
 
 <input type="file" id="fileInput" accept="image/*" onchange="uploadImage(this)">
+
+<!-- Context menu -->
+<div class="ctx-menu" id="ctxMenu" style="display:none">
+  <button class="ctx-item" onclick="ctxReact()">😊 React</button>
+  <button class="ctx-item" onclick="ctxPin()">📌 Ghim tin nhắn</button>
+  <button class="ctx-item danger" id="ctxDeleteBtn" onclick="ctxDelete()">🗑️ Xoá tin nhắn</button>
+</div>
 
 <script>
 const socket = io();
@@ -625,6 +703,10 @@ async function openRoom(room) {
         <div class="chat-room-name">${escHtml(displayName)}${room.isDM ? ' <span style="font-size:0.75rem;color:var(--muted);font-weight:400">· Tin nhắn riêng</span>' : ''}</div>
         <div class="chat-room-status"><span class="online-count" id="onlineCount">0</span> online</div>
       </div>
+    </div>
+    <div class="pinned-bar" id="pinnedBar" style="display:none">
+      <span class="pin-icon">📌</span>
+      <span class="pin-content" id="pinnedContent"></span>
     </div>
     <div class="messages-wrap" id="msgsWrap">
       <div class="empty-state"><div class="icon">💬</div><div>Hãy gửi tin nhắn đầu tiên!</div></div>
@@ -934,12 +1016,167 @@ document.addEventListener('click', (e) => {
   if (!e.target.closest('.sticker-panel') && !e.target.closest('.tool-btn')) {
     document.getElementById('stickerPanel').style.display = 'none';
   }
+  if (!e.target.closest('.ctx-menu')) hideCtxMenu();
   if (e.target === document.getElementById('newRoomModal')) hideNewRoomModal();
 });
 
 document.addEventListener('keydown', (e) => {
   if (e.key === 'Enter' && document.getElementById('newRoomModal').classList.contains('show')) {
     createRoom();
+  }
+});
+
+// ─── NEW FEATURES ─────────────────────────────────────────────────────────
+
+// Context menu (right-click / long press on bubble)
+let ctxTargetMsg = null;
+function showCtxMenu(e, msgId, isMe) {
+  e.preventDefault();
+  ctxTargetMsg = msgId;
+  document.getElementById('ctxMenu').style.display = 'block';
+  document.getElementById('ctxDeleteBtn').style.display = isMe ? 'flex' : 'none';
+  const x = Math.min(e.clientX, window.innerWidth - 180);
+  const y = Math.min(e.clientY, window.innerHeight - 150);
+  document.getElementById('ctxMenu').style.left = x + 'px';
+  document.getElementById('ctxMenu').style.top = y + 'px';
+}
+
+function ctxReact() {
+  const bubble = document.querySelector(`[data-id="${ctxTargetMsg}"]`);
+  if (bubble) showReactPicker({ clientX: bubble.getBoundingClientRect().left, clientY: bubble.getBoundingClientRect().top }, ctxTargetMsg);
+  hideCtxMenu();
+}
+function ctxPin() {
+  if (!currentRoom || !ctxTargetMsg) return;
+  socket.emit('pin_message', { message_id: ctxTargetMsg, room_id: currentRoom.id });
+  hideCtxMenu();
+}
+function ctxDelete() {
+  if (!currentRoom || !ctxTargetMsg) return;
+  socket.emit('delete_message', { message_id: ctxTargetMsg, room_id: currentRoom.id });
+  hideCtxMenu();
+}
+function hideCtxMenu() { document.getElementById('ctxMenu').style.display = 'none'; ctxTargetMsg = null; }
+
+// Theme toggle
+function toggleTheme() {
+  document.body.classList.toggle('light');
+  const btn = document.querySelector('.theme-btn');
+  btn.textContent = document.body.classList.contains('light') ? '🌑' : '🌙';
+  localStorage.setItem('theme', document.body.classList.contains('light') ? 'light' : 'dark');
+}
+if (localStorage.getItem('theme') === 'light') {
+  document.body.classList.add('light');
+  document.querySelector('.theme-btn') && (document.querySelector('.theme-btn').textContent = '🌑');
+}
+
+// Pinned bar
+function updatePinnedBar(pinned) {
+  const bar = document.getElementById('pinnedBar');
+  const content = document.getElementById('pinnedContent');
+  if (!bar) return;
+  if (pinned) {
+    bar.style.display = 'flex';
+    content.textContent = `${pinned.username}: ${pinned.content}`;
+  } else {
+    bar.style.display = 'none';
+  }
+}
+
+// Notification
+let unreadCounts = {};
+function addUnread(roomId) {
+  if (currentRoom && currentRoom.id === roomId) return;
+  unreadCounts[roomId] = (unreadCounts[roomId] || 0) + 1;
+  renderRooms(rooms);
+}
+
+// Override renderRooms to show badges
+const _origRenderRooms = renderRooms;
+function renderRooms(list) {
+  const el = document.getElementById('roomsList');
+  el.innerHTML = '';
+  list.forEach(r => {
+    const item = document.createElement('div');
+    item.className = 'room-item' + (currentRoom?.id === r.id ? ' active' : '');
+    item.dataset.id = r.id;
+    const preview = r.last_msg || 'Chưa có tin nhắn';
+    const unread = unreadCounts[r.id] || 0;
+    item.innerHTML = `
+      <div class="room-avatar">${r.name[0].toUpperCase()}</div>
+      <div class="room-info">
+        <div class="room-name">${escHtml(r.name)}</div>
+        <div class="room-preview">${escHtml(preview.length > 28 ? preview.slice(0, 28) + '…' : preview)}</div>
+      </div>
+      ${unread > 0 ? `<span class="notif-badge">${unread}</span>` : ''}`;
+    item.onclick = () => { unreadCounts[r.id] = 0; openRoom(r); };
+    el.appendChild(item);
+  });
+}
+
+// Socket events for new features
+socket.on('message_deleted', (data) => {
+  const bubble = document.querySelector(`[data-id="${data.message_id}"]`);
+  if (bubble) { bubble.textContent = 'Tin nhắn đã bị xoá'; bubble.classList.add('deleted'); }
+});
+
+socket.on('pin_update', (data) => {
+  if (!currentRoom || data.room_id !== currentRoom.id) return;
+  updatePinnedBar(data.pinned);
+});
+
+socket.on('read_update', (data) => {
+  if (!currentRoom || data.room_id !== currentRoom.id) return;
+  // Show "Đã xem" under last message
+  document.querySelectorAll('.read-receipt').forEach(el => el.remove());
+  if (data.user_id !== me.id) {
+    const bubble = document.querySelector(`[data-id="${data.msg_id}"]`);
+    if (bubble) {
+      const receipt = document.createElement('div');
+      receipt.className = 'read-receipt';
+      receipt.textContent = `✓✓ ${data.username} đã xem`;
+      bubble.closest('.bubble-row')?.after(receipt);
+    }
+  }
+});
+
+// Mark read when opening room
+const _origOpenRoom = openRoom;
+async function openRoom(room) {
+  await _origOpenRoom(room);
+  // mark read after messages loaded
+  setTimeout(() => {
+    const wrap = document.getElementById('msgsWrap');
+    const lastBubble = wrap?.querySelector('.bubble:last-of-type');
+    const lastId = lastBubble ? +lastBubble.dataset.id : 0;
+    if (lastId) socket.emit('mark_read', { room_id: room.id, msg_id: lastId });
+  }, 500);
+}
+
+// Override appendMessage to add context menu & unread
+const _origAppendMessage = appendMessage;
+function appendMessage(m, prevUserId, scroll) {
+  _origAppendMessage(m, prevUserId, scroll);
+  // Add context menu to bubble
+  const bubble = document.querySelector(`[data-id="${m.id}"]`);
+  if (bubble) {
+    const isMe = m.user_id === me.id;
+    bubble.addEventListener('contextmenu', (e) => showCtxMenu(e, m.id, isMe));
+  }
+  // Notify unread
+  if (scroll !== false) addUnread(m.room_id);
+  // Mark read
+  if (currentRoom && m.room_id === currentRoom.id) {
+    socket.emit('mark_read', { room_id: currentRoom.id, msg_id: m.id });
+  }
+}
+
+// Browser notification
+if (Notification.permission === 'default') Notification.requestPermission();
+socket.on('new_message', (msg) => {
+  if (currentRoom && msg.room_id === currentRoom.id) return;
+  if (Notification.permission === 'granted' && document.hidden) {
+    new Notification(`VibChat - ${msg.username}`, { body: msg.content, icon: '/static/icon.png' });
   }
 });
 
