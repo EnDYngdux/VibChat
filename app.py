@@ -77,12 +77,37 @@ def init_db():
                 last_read_msg_id INTEGER,
                 PRIMARY KEY (room_id, user_id)
             );
+            CREATE TABLE IF NOT EXISTS friendships (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                sender_id INTEGER NOT NULL,
+                receiver_id INTEGER NOT NULL,
+                status TEXT DEFAULT 'pending',
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                UNIQUE(sender_id, receiver_id)
+            );
+            CREATE TABLE IF NOT EXISTS friendships (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                sender_id INTEGER NOT NULL,
+                receiver_id INTEGER NOT NULL,
+                status TEXT DEFAULT 'pending',
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                UNIQUE(sender_id, receiver_id)
+            );
         ''')
         # Add columns if upgrading old DB
         try: db.execute('ALTER TABLE messages ADD COLUMN deleted INTEGER DEFAULT 0')
         except: pass
         try: db.execute('ALTER TABLE messages ADD COLUMN pinned INTEGER DEFAULT 0')
         except: pass
+        # Create friendships table if upgrading
+        db.execute('''CREATE TABLE IF NOT EXISTS friendships (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            sender_id INTEGER NOT NULL,
+            receiver_id INTEGER NOT NULL,
+            status TEXT DEFAULT 'pending',
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            UNIQUE(sender_id, receiver_id)
+        )''')
         db.commit()
         # Seed default rooms
         existing = db.execute('SELECT COUNT(*) as c FROM rooms').fetchone()['c']
@@ -242,9 +267,86 @@ def upload_file():
 def get_users():
     if 'user_id' not in session:
         return jsonify({'error': 'Unauthorized'}), 401
+    q = request.args.get('q', '').strip()
     with get_db() as db:
-        users = db.execute('SELECT id, username FROM users WHERE id != ? ORDER BY username', (session['user_id'],)).fetchall()
-    return jsonify([dict(u) for u in users])
+        if q:
+            users = db.execute('SELECT id, username FROM users WHERE id != ? AND username LIKE ? ORDER BY username LIMIT 20',
+                               (session['user_id'], f'%{q}%')).fetchall()
+        else:
+            users = db.execute('SELECT id, username FROM users WHERE id != ? ORDER BY username', (session['user_id'],)).fetchall()
+        # Get friendship status for each user
+        result = []
+        for u in users:
+            fs = db.execute('''SELECT status, sender_id FROM friendships
+                WHERE (sender_id=? AND receiver_id=?) OR (sender_id=? AND receiver_id=?)''',
+                (session['user_id'], u['id'], u['id'], session['user_id'])).fetchone()
+            status = None
+            if fs:
+                status = fs['status']
+                if fs['status'] == 'pending' and fs['sender_id'] != session['user_id']:
+                    status = 'incoming'
+            result.append({'id': u['id'], 'username': u['username'], 'friend_status': status})
+    return jsonify(result)
+
+@app.route('/api/friends')
+def get_friends():
+    if 'user_id' not in session:
+        return jsonify({'error': 'Unauthorized'}), 401
+    with get_db() as db:
+        friends = db.execute('''
+            SELECT u.id, u.username FROM users u
+            JOIN friendships f ON (f.sender_id=u.id OR f.receiver_id=u.id)
+            WHERE f.status='accepted'
+            AND (f.sender_id=? OR f.receiver_id=?)
+            AND u.id != ?
+        ''', (session['user_id'], session['user_id'], session['user_id'])).fetchall()
+    return jsonify([dict(f) for f in friends])
+
+@app.route('/api/friend/request/<int:other_id>', methods=['POST'])
+def send_friend_request(other_id):
+    if 'user_id' not in session:
+        return jsonify({'error': 'Unauthorized'}), 401
+    try:
+        with get_db() as db:
+            db.execute('INSERT INTO friendships (sender_id, receiver_id, status) VALUES (?,?,?)',
+                       (session['user_id'], other_id, 'pending'))
+            db.commit()
+        return jsonify({'ok': True})
+    except:
+        return jsonify({'error': 'Đã gửi lời mời rồi'}), 400
+
+@app.route('/api/friend/accept/<int:other_id>', methods=['POST'])
+def accept_friend(other_id):
+    if 'user_id' not in session:
+        return jsonify({'error': 'Unauthorized'}), 401
+    with get_db() as db:
+        db.execute('''UPDATE friendships SET status='accepted'
+            WHERE sender_id=? AND receiver_id=?''',
+            (other_id, session['user_id']))
+        db.commit()
+    return jsonify({'ok': True})
+
+@app.route('/api/friend/decline/<int:other_id>', methods=['POST'])
+def decline_friend(other_id):
+    if 'user_id' not in session:
+        return jsonify({'error': 'Unauthorized'}), 401
+    with get_db() as db:
+        db.execute('''DELETE FROM friendships
+            WHERE (sender_id=? AND receiver_id=?) OR (sender_id=? AND receiver_id=?)''',
+            (other_id, session['user_id'], session['user_id'], other_id))
+        db.commit()
+    return jsonify({'ok': True})
+
+@app.route('/api/friend/requests')
+def get_friend_requests():
+    if 'user_id' not in session:
+        return jsonify({'error': 'Unauthorized'}), 401
+    with get_db() as db:
+        reqs = db.execute('''SELECT u.id, u.username FROM users u
+            JOIN friendships f ON f.sender_id=u.id
+            WHERE f.receiver_id=? AND f.status='pending'
+        ''', (session['user_id'],)).fetchall()
+    return jsonify([dict(r) for r in reqs])
 
 @app.route('/api/dm/<int:other_id>')
 def get_or_create_dm(other_id):

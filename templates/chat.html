@@ -624,6 +624,7 @@ function filterRooms(q) {
 
 let currentTab = 'rooms';
 let users = [];
+let friendRequests = [];
 
 function switchTab(tab) {
   currentTab = tab;
@@ -631,55 +632,152 @@ function switchTab(tab) {
   document.getElementById('tabDM').classList.toggle('active', tab === 'dm');
   document.getElementById('roomsList').style.display = tab === 'rooms' ? '' : 'none';
   document.getElementById('usersList').style.display = tab === 'dm' ? '' : 'none';
-  document.getElementById('searchInput').placeholder = tab === 'rooms' ? '🔍 Tìm phòng...' : '🔍 Tìm người...';
-  if (tab === 'dm') loadUsers();
+  document.getElementById('searchInput').placeholder = tab === 'rooms' ? '🔍 Tìm phòng...' : '🔍 Tìm/thêm bạn...';
+  if (tab === 'dm') loadDMTab();
+}
+
+async function loadDMTab() {
+  await loadFriendRequests();
+  await loadUsers();
+}
+
+async function loadFriendRequests() {
+  const res = await fetch('/api/friend/requests');
+  friendRequests = await res.json();
+  renderFriendRequests();
+}
+
+function renderFriendRequests() {
+  const existing = document.getElementById('friendReqSection');
+  if (existing) existing.remove();
+  if (friendRequests.length === 0) return;
+
+  const el = document.getElementById('usersList');
+  const section = document.createElement('div');
+  section.id = 'friendReqSection';
+  section.innerHTML = `<div style="font-size:0.75rem;color:var(--accent);padding:8px 12px;font-weight:700;letter-spacing:0.05em">LỜI MỜI KẾT BẠN (${friendRequests.length})</div>`;
+  friendRequests.forEach(u => {
+    const item = document.createElement('div');
+    item.className = 'room-item';
+    item.style.cssText = 'border:1px solid rgba(124,110,240,0.3);margin-bottom:4px';
+    item.innerHTML = `
+      <div class="room-avatar" style="background:linear-gradient(135deg,#f0a060,#f06090)">${u.username[0].toUpperCase()}</div>
+      <div class="room-info">
+        <div class="room-name">${escHtml(u.username)}</div>
+        <div style="display:flex;gap:6px;margin-top:4px">
+          <button onclick="acceptFriend(${u.id})" style="background:var(--accent);border:none;color:#fff;padding:3px 10px;border-radius:8px;font-size:0.78rem;cursor:pointer">✓ Chấp nhận</button>
+          <button onclick="declineFriend(${u.id})" style="background:var(--surface2);border:1px solid var(--border);color:var(--muted);padding:3px 10px;border-radius:8px;font-size:0.78rem;cursor:pointer">✗ Từ chối</button>
+        </div>
+      </div>`;
+    section.appendChild(item);
+  });
+  el.prepend(section);
 }
 
 async function loadUsers() {
-  const res = await fetch('/api/users');
+  const q = document.getElementById('searchInput').value.trim();
+  const url = q ? `/api/users?q=${encodeURIComponent(q)}` : '/api/users';
+  const res = await fetch(url);
   users = await res.json();
   renderUsers(users);
 }
 
 function renderUsers(list) {
+  // Remove old user items (keep friend request section)
   const el = document.getElementById('usersList');
-  el.innerHTML = '';
-  if (list.length === 0) {
-    el.innerHTML = '<div style="text-align:center;color:var(--muted);padding:20px;font-size:0.85rem;">Chưa có người dùng nào khác</div>';
+  Array.from(el.children).forEach(c => { if (c.id !== 'friendReqSection') c.remove(); });
+
+  // Split into friends and others
+  const friends = list.filter(u => u.friend_status === 'accepted');
+  const others = list.filter(u => u.friend_status !== 'accepted');
+
+  if (friends.length === 0 && others.length === 0) {
+    const empty = document.createElement('div');
+    empty.style.cssText = 'text-align:center;color:var(--muted);padding:20px;font-size:0.85rem';
+    empty.textContent = 'Chưa có ai cả';
+    el.appendChild(empty);
     return;
   }
-  list.forEach(u => {
-    const item = document.createElement('div');
-    item.className = 'room-item';
-    const isOnline = Object.values(online_users).includes(u.username);
-    item.innerHTML = `
-      <div class="room-avatar" style="background:linear-gradient(135deg,#f06090,#7c6ef0)">${u.username[0].toUpperCase()}</div>
-      <div class="room-info">
-        <div class="room-name">${escHtml(u.username)}</div>
-        <div class="room-preview" style="color:${isOnline ? '#4cdb7a' : 'var(--muted)'}">
-          ${isOnline ? '🟢 Online' : '⚫ Offline'}
-        </div>
-      </div>`;
-    item.onclick = () => openDM(u);
-    el.appendChild(item);
-  });
+
+  // Friends section
+  if (friends.length > 0) {
+    const label = document.createElement('div');
+    label.style.cssText = 'font-size:0.75rem;color:var(--accent2);padding:8px 12px;font-weight:700;letter-spacing:0.05em';
+    label.textContent = `BẠN BÈ (${friends.length})`;
+    el.appendChild(label);
+    friends.forEach(u => el.appendChild(makeUserItem(u)));
+  }
+
+  // Others section
+  if (others.length > 0) {
+    const label = document.createElement('div');
+    label.style.cssText = 'font-size:0.75rem;color:var(--muted);padding:8px 12px;font-weight:700;letter-spacing:0.05em';
+    label.textContent = 'NGƯỜI DÙNG KHÁC';
+    el.appendChild(label);
+    others.forEach(u => el.appendChild(makeUserItem(u)));
+  }
+}
+
+function makeUserItem(u) {
+  const item = document.createElement('div');
+  item.className = 'room-item';
+  const isOnline = Object.values(online_users).includes(u.username);
+  const isFriend = u.friend_status === 'accepted';
+  const isPending = u.friend_status === 'pending';
+  const isIncoming = u.friend_status === 'incoming';
+
+  let actionBtn = '';
+  if (isFriend) {
+    actionBtn = `<button onclick="openDM({id:${u.id},username:'${u.username}'})" style="background:var(--accent);border:none;color:#fff;padding:3px 10px;border-radius:8px;font-size:0.78rem;cursor:pointer">💬 Nhắn</button>`;
+  } else if (isPending) {
+    actionBtn = `<span style="font-size:0.75rem;color:var(--muted)">Đã gửi lời mời</span>`;
+  } else if (isIncoming) {
+    actionBtn = `<button onclick="acceptFriend(${u.id})" style="background:var(--accent);border:none;color:#fff;padding:3px 10px;border-radius:8px;font-size:0.78rem;cursor:pointer">✓ Chấp nhận</button>`;
+  } else {
+    actionBtn = `<button onclick="sendFriendReq(${u.id},this)" style="background:var(--surface2);border:1px solid var(--border);color:var(--text);padding:3px 10px;border-radius:8px;font-size:0.78rem;cursor:pointer">+ Kết bạn</button>`;
+  }
+
+  item.innerHTML = `
+    <div class="room-avatar" style="background:linear-gradient(135deg,${isFriend ? '#f06090,#7c6ef0' : '#666,#888'})">${u.username[0].toUpperCase()}</div>
+    <div class="room-info">
+      <div class="room-name">${escHtml(u.username)}</div>
+      <div style="color:${isOnline ? '#4cdb7a' : 'var(--muted)'};font-size:0.78rem">${isOnline ? '🟢 Online' : '⚫ Offline'}</div>
+    </div>
+    <div style="flex-shrink:0">${actionBtn}</div>`;
+  return item;
+}
+
+async function sendFriendReq(userId, btn) {
+  btn.textContent = '...';
+  btn.disabled = true;
+  await fetch(`/api/friend/request/${userId}`, { method: 'POST' });
+  await loadUsers();
+}
+
+async function acceptFriend(userId) {
+  await fetch(`/api/friend/accept/${userId}`, { method: 'POST' });
+  await loadDMTab();
+}
+
+async function declineFriend(userId) {
+  await fetch(`/api/friend/decline/${userId}`, { method: 'POST' });
+  await loadDMTab();
 }
 
 async function openDM(user) {
   const res = await fetch(`/api/dm/${user.id}`);
-  const room = await res.json();
-  // Show display name as the other person's name
-  room.displayName = user.username;
-  room.isDM = true;
-  openRoom(room);
+  const data = await res.json();
+  if (data.error) { alert(data.error); return; }
+  data.displayName = user.username;
+  data.isDM = true;
+  openRoom(data);
 }
 
 function handleSearch(q) {
   if (currentTab === 'rooms') {
     filterRooms(q);
   } else {
-    const filtered = q ? users.filter(u => u.username.toLowerCase().includes(q.toLowerCase())) : users;
-    renderUsers(filtered);
+    loadUsers();
   }
 }
 
