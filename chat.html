@@ -598,15 +598,21 @@ let online_users = {};
 
 // ─── INIT ───────────────────────────────────────────────────────────────────
 
+// Cache tin nhắn theo room_id
+const msgCache = {};
+
 async function init() {
-  const res = await fetch('/api/me');
-  me = await res.json();
+  // 1 request thay vì 3
+  const res = await fetch('/api/init');
+  const data = await res.json();
+  me = data.me;
+  stickers = data.stickers;
   const nameEl = document.getElementById('myName');
   nameEl.textContent = me.username;
-  nameEl.title = me.username; // tooltip hiện full khi hover
+  nameEl.title = me.username;
   document.getElementById('myAvatar').textContent = me.username[0].toUpperCase();
-  await loadRooms();
-  await loadStickers();
+  rooms = data.rooms;
+  renderRooms(rooms);
 }
 
 async function loadRooms() {
@@ -803,6 +809,7 @@ function handleSearch(q) {
 // ─── OPEN ROOM ───────────────────────────────────────────────────────────────
 
 async function openRoom(room) {
+  if (currentRoom && currentRoom.id === room.id) return; // đã ở phòng này rồi
   if (currentRoom) socket.emit('leave_room', { room_id: currentRoom.id });
   currentRoom = room;
 
@@ -841,8 +848,14 @@ async function openRoom(room) {
 
   socket.emit('join_room', { room_id: room.id });
 
-  const msgs = await fetch(`/api/rooms/${room.id}/messages`).then(r => r.json());
-  renderMessages(msgs);
+  // Dùng cache nếu có, load nhanh hơn
+  if (msgCache[room.id]) {
+    renderMessages(msgCache[room.id]);
+  } else {
+    const msgs = await fetch(`/api/rooms/${room.id}/messages`).then(r => r.json());
+    msgCache[room.id] = msgs;
+    renderMessages(msgs);
+  }
   document.getElementById('msgInput').focus();
 }
 
@@ -1009,6 +1022,7 @@ async function uploadImage(input) {
 // ─── STICKER ─────────────────────────────────────────────────────────────
 
 async function loadStickers() {
+  if (Object.keys(stickers).length > 0) return; // đã có rồi
   stickers = await fetch('/api/stickers').then(r => r.json());
 }
 
@@ -1076,6 +1090,8 @@ function sendReactionDirect(msgId, emoji) {
 // ─── SOCKET EVENTS ────────────────────────────────────────────────────────
 
 socket.on('new_message', (msg) => {
+  // Cập nhật cache
+  if (msgCache[msg.room_id]) msgCache[msg.room_id].push(msg);
   if (!currentRoom || msg.room_id !== currentRoom.id) return;
   const wrap = document.getElementById('msgsWrap');
   const lastGroup = wrap?.querySelector('.msg-group:last-child');

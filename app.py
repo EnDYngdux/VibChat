@@ -158,6 +158,43 @@ init_db()
 def ping():
     return 'pong', 200
 
+@app.route('/api/init')
+def api_init():
+    if 'user_id' not in session:
+        return jsonify({'error': 'Unauthorized'}), 401
+    db = get_db(); cur = db.cursor()
+    # Rooms
+    cur.execute(f'''
+        SELECT r.id, r.name, r.type,
+               (SELECT content FROM messages WHERE room_id=r.id ORDER BY created_at DESC LIMIT 1) as last_msg,
+               (SELECT created_at FROM messages WHERE room_id=r.id ORDER BY created_at DESC LIMIT 1) as last_time
+        FROM rooms r
+        JOIN room_members rm ON rm.room_id = r.id
+        WHERE rm.user_id = {PH} AND r.type != 'dm'
+        ORDER BY last_time DESC NULLS LAST
+    ''' if DATABASE_URL else f'''
+        SELECT r.id, r.name, r.type,
+               (SELECT content FROM messages WHERE room_id=r.id ORDER BY created_at DESC LIMIT 1) as last_msg,
+               (SELECT created_at FROM messages WHERE room_id=r.id ORDER BY created_at DESC LIMIT 1) as last_time
+        FROM rooms r
+        JOIN room_members rm ON rm.room_id = r.id
+        WHERE rm.user_id = {PH} AND r.type != 'dm'
+        ORDER BY last_time DESC
+    ''', (session['user_id'],))
+    rooms = dict_rows(cur)
+    cur.close(); release_db(db)
+    stickers = {
+        'Cảm xúc': ['😀','😂','🥹','😍','🥰','😎','🤩','😭','😤','🥳','😴','🤔','😱','🤣','😊'],
+        'Động vật': ['🐶','🐱','🐭','🐹','🐰','🦊','🐻','🐼','🐨','🐯','🦁','🐮','🐷','🐸','🐙'],
+        'Đồ ăn': ['🍕','🍔','🌮','🍜','🍣','🍩','🍦','🧋','☕','🍺','🎂','🍎','🍓','🥑','🌽'],
+        'Hoạt động': ['⚽','🏀','🎮','🎵','🎬','🏖️','✈️','🚀','💎','🎁','🔥','💯','✨','🌈','❤️']
+    }
+    return jsonify({
+        'me': {'id': session['user_id'], 'username': session['username']},
+        'rooms': rooms,
+        'stickers': stickers
+    })
+
 @app.route('/')
 def index():
     if 'user_id' not in session:
