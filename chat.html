@@ -3,10 +3,14 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
+<meta name="theme-color" content="#0f0f12">
 <title>VibChat</title>
-<link rel="preconnect" href="https://fonts.googleapis.com">
-<link href="https://fonts.googleapis.com/css2?family=Syne:wght@600;700;800&family=DM+Sans:wght@300;400;500;600&display=swap" rel="stylesheet">
-<script src="https://cdn.socket.io/4.7.5/socket.io.min.js"></script>
+<link rel="preconnect" href="https://cdn.socket.io">
+<link rel="preconnect" href="https://fonts.googleapis.com" crossorigin>
+<link rel="preload" as="style" href="https://fonts.googleapis.com/css2?family=Syne:wght@600;700;800&family=DM+Sans:wght@300;400;500;600&display=swap">
+<link href="https://fonts.googleapis.com/css2?family=Syne:wght@600;700;800&family=DM+Sans:wght@300;400;500;600&display=swap" rel="stylesheet" media="print" onload="this.media='all'">
+<noscript><link href="https://fonts.googleapis.com/css2?family=Syne:wght@600;700;800&family=DM+Sans:wght@300;400;500;600&display=swap" rel="stylesheet"></noscript>
+<script src="https://cdn.socket.io/4.7.5/socket.io.min.js" crossorigin="anonymous"></script>
 <style>
 *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
 
@@ -482,6 +486,31 @@ body.light {
   align-items: center; justify-content: center;
   color: var(--muted); text-align: center; gap: 16px;
 }
+
+/* ─── SKELETON LOADING ─── */
+@keyframes shimmer {
+  0% { background-position: -400px 0; }
+  100% { background-position: 400px 0; }
+}
+.skeleton {
+  background: linear-gradient(90deg, var(--surface2) 25%, var(--border) 50%, var(--surface2) 75%);
+  background-size: 800px 100%;
+  animation: shimmer 1.5s infinite;
+  border-radius: 10px;
+}
+
+/* ─── SMOOTH TRANSITIONS ─── */
+.bubble { transition: opacity 0.15s ease; }
+.room-item { transition: background 0.1s ease; }
+.msg-group { animation: msgIn 0.2s ease; }
+@keyframes msgIn {
+  from { opacity: 0; transform: translateY(6px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+
+/* ─── IMAGE LOADING BLUR ─── */
+.bubble img { transition: filter 0.3s ease; }
+.bubble img[data-src] { filter: blur(8px); }
 .welcome .big-icon { font-size: 4rem; }
 .welcome h2 { font-family: var(--font-display); font-size: 1.5rem; color: var(--text); }
 
@@ -1282,6 +1311,81 @@ if (Notification.permission === 'default') Notification.requestPermission();
 
 
 init();
+
+// ─── KEEP-ALIVE: ping mỗi 4 phút để tránh Railway cold start ──────────────
+setInterval(async () => {
+  try { await fetch('/keepalive'); } catch {}
+}, 4 * 60 * 1000);
+
+// ─── LAZY LOAD ảnh khi scroll vào viewport ────────────────────────────────
+if ('IntersectionObserver' in window) {
+  const imgObserver = new IntersectionObserver((entries) => {
+    entries.forEach(e => {
+      if (e.isIntersecting) {
+        const img = e.target;
+        if (img.dataset.src) {
+          img.src = img.dataset.src;
+          img.removeAttribute('data-src');
+          imgObserver.unobserve(img);
+        }
+      }
+    });
+  }, { rootMargin: '100px' });
+
+  // Observer cho ảnh mới được thêm vào
+  window._observeImg = (img) => imgObserver.observe(img);
+} else {
+  window._observeImg = () => {};
+}
+
+// ─── OPTIMISTIC UI: hiển thị tin nhắn ngay khi gửi (không đợi server) ─────
+const _origSendMsg = sendMsg;
+function sendMsg() {
+  const input = document.getElementById('msgInput');
+  if (!input || !currentRoom || !input.value.trim()) return;
+  
+  // Hiển thị ngay lập tức (optimistic)
+  const tempMsg = {
+    id: 'temp_' + Date.now(),
+    room_id: currentRoom.id,
+    content: input.value.trim(),
+    type: 'text',
+    username: me.username,
+    user_id: me.id,
+    created_at: new Date().toISOString(),
+    reactions: '[]',
+    deleted: 0
+  };
+  const wrap = document.getElementById('msgsWrap');
+  const lastGroup = wrap?.querySelector('.msg-group:last-child');
+  appendMessage(tempMsg, lastGroup ? +lastGroup.dataset.uid : null);
+  
+  // Gửi qua socket
+  socket.emit('send_message', { room_id: currentRoom.id, content: tempMsg.content, type: 'text' });
+  input.value = '';
+  autoResize(input);
+  socket.emit('typing', { room_id: currentRoom.id, typing: false });
+}
+
+// Khi nhận tin nhắn thật từ server, xóa tin tạm nếu là của mình
+const _origSocketMsg = socket.listeners('new_message')[0];
+socket.on('new_message', (msg) => {
+  if (parseInt(msg.user_id) === parseInt(me?.id) && currentRoom && parseInt(msg.room_id) === parseInt(currentRoom.id)) {
+    // Xóa bubble tạm (nếu có)
+    const tempBubbles = document.querySelectorAll('[data-id^="temp_"]');
+    if (tempBubbles.length > 0) {
+      tempBubbles[tempBubbles.length - 1]?.closest('.bubble-row')?.remove();
+    }
+  }
+});
+
+// ─── SCROLL TO BOTTOM nhanh hơn ───────────────────────────────────────────
+function scrollBottom() {
+  const wrap = document.getElementById('msgsWrap');
+  if (!wrap) return;
+  // requestAnimationFrame để không block render
+  requestAnimationFrame(() => { wrap.scrollTop = wrap.scrollHeight; });
+}
 </script>
 </body>
 </html>

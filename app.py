@@ -7,16 +7,22 @@ from werkzeug.utils import secure_filename
 app = Flask(__name__)
 app.secret_key = os.environ.get('SECRET_KEY', 'change-this-in-production-please')
 socketio = SocketIO(app, cors_allowed_origins="*", async_mode='eventlet',
-                    ping_timeout=20, ping_interval=10,
-                    logger=False, engineio_logger=False)
+                    ping_timeout=60, ping_interval=25,
+                    logger=False, engineio_logger=False,
+                    max_http_buffer_size=5 * 1024 * 1024)
 
 @app.after_request
 def add_headers(response):
-    # Cache static assets
-    if request.path.startswith('/static/'):
-        response.headers['Cache-Control'] = 'public, max-age=31536000'
+    if request.path.startswith('/static/uploads/'):
+        # uploaded files cache 7 days
+        response.headers['Cache-Control'] = 'public, max-age=604800'
+    elif request.path.startswith('/static/'):
+        # other static assets cache 1 year
+        response.headers['Cache-Control'] = 'public, max-age=31536000, immutable'
     else:
         response.headers['Cache-Control'] = 'no-cache, no-store, must-revalidate'
+    # Gzip hint
+    response.headers['Vary'] = 'Accept-Encoding'
     return response
 
 UPLOAD_FOLDER = 'static/uploads'
@@ -141,6 +147,19 @@ def init_db():
         cur.execute("INSERT INTO rooms (name, type, created_by) VALUES ('General', 'group', 1)")
         cur.execute("INSERT INTO rooms (name, type, created_by) VALUES ('Random', 'group', 1)")
         cur.execute("INSERT INTO rooms (name, type, created_by) VALUES ('Dev Talk', 'group', 1)")
+    # Indexes để query nhanh hơn
+    indexes = [
+        'CREATE INDEX IF NOT EXISTS idx_messages_room_id ON messages(room_id)',
+        'CREATE INDEX IF NOT EXISTS idx_messages_created_at ON messages(created_at)',
+        'CREATE INDEX IF NOT EXISTS idx_room_members_user_id ON room_members(user_id)',
+        'CREATE INDEX IF NOT EXISTS idx_reactions_message_id ON reactions(message_id)',
+        'CREATE INDEX IF NOT EXISTS idx_friendships_sender ON friendships(sender_id)',
+        'CREATE INDEX IF NOT EXISTS idx_friendships_receiver ON friendships(receiver_id)',
+    ]
+    for idx in indexes:
+        try:
+            cur.execute(idx)
+        except: pass
     db.commit()
     cur.close()
     db.close()
@@ -161,6 +180,11 @@ init_db()
 @app.route('/ping')
 def ping():
     return 'pong', 200
+
+@app.route('/keepalive')
+def keepalive():
+    """Endpoint để client tự ping mỗi 4 phút, tránh Railway cold start"""
+    return 'ok', 200
 
 @app.route('/api/init')
 def api_init():
@@ -330,7 +354,7 @@ def get_messages(room_id):
         JOIN users u ON u.id = m.user_id
         WHERE m.room_id = {PH}
         ORDER BY m.created_at ASC
-        LIMIT 100
+        LIMIT 50
     ''' if DATABASE_URL else f'''
         SELECT m.id, m.content, m.type, m.created_at, m.deleted, m.pinned,
                u.username, u.id as user_id,
@@ -340,7 +364,7 @@ def get_messages(room_id):
         JOIN users u ON u.id = m.user_id
         WHERE m.room_id = {PH}
         ORDER BY m.created_at ASC
-        LIMIT 100
+        LIMIT 50
     ''', (room_id,))
     msgs = dict_rows(cur)
     # Join room if not member
