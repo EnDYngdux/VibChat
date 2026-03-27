@@ -148,8 +148,9 @@ body { font-family: var(--font); background: var(--bg); color: var(--text); }
   display: flex;
   align-items: center;
   gap: 8px;
-  width: 100%;
+  width: 300px;
   box-sizing: border-box;
+  overflow: hidden;
 }
 .user-avatar {
   width: 32px; height: 32px;
@@ -164,6 +165,7 @@ body { font-family: var(--font); background: var(--bg); color: var(--text); }
   font-size: 0.82rem;
   flex: 1;
   min-width: 0;
+  max-width: 180px;
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -494,6 +496,7 @@ body.light {
   flex: 1; display: flex; flex-direction: column;
   align-items: center; justify-content: center;
   color: var(--muted); text-align: center; gap: 16px;
+  pointer-events: none;
 }
 .welcome .big-icon { font-size: 4rem; }
 .welcome h2 { font-family: var(--font-display); font-size: 1.5rem; color: var(--text); }
@@ -598,7 +601,9 @@ let online_users = {};
 async function init() {
   const res = await fetch('/api/me');
   me = await res.json();
-  document.getElementById('myName').textContent = me.username;
+  const nameEl = document.getElementById('myName');
+  nameEl.textContent = me.username;
+  nameEl.title = me.username; // tooltip hiện full khi hover
   document.getElementById('myAvatar').textContent = me.username[0].toUpperCase();
   await loadRooms();
   await loadStickers();
