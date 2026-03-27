@@ -549,20 +549,29 @@ def get_stickers():
 
 online_users = {}   # user_id -> username
 user_sids = {}      # user_id -> socket id (để gửi realtime cho đúng người)
+sid_users = {}      # socket id -> {user_id, username} — dùng thay session trong socket handlers
 
 @socketio.on('connect')
 def on_connect():
     if 'user_id' in session:
-        online_users[session['user_id']] = session['username']
-        user_sids[session['user_id']] = request.sid
+        uid = session['user_id']
+        uname = session['username']
+        online_users[uid] = uname
+        user_sids[uid] = request.sid
+        sid_users[request.sid] = {'user_id': uid, 'username': uname}
         emit('online_users', list(online_users.values()), broadcast=True)
 
 @socketio.on('disconnect')
 def on_disconnect():
-    if 'user_id' in session:
+    user_info = sid_users.pop(request.sid, None)
+    if user_info:
+        uid = user_info['user_id']
+        online_users.pop(uid, None)
+        user_sids.pop(uid, None)
+    elif 'user_id' in session:
         online_users.pop(session['user_id'], None)
         user_sids.pop(session['user_id'], None)
-        emit('online_users', list(online_users.values()), broadcast=True)
+    emit('online_users', list(online_users.values()), broadcast=True)
 
 @socketio.on('join_room')
 def on_join(data):
@@ -574,57 +583,74 @@ def on_leave(data):
 
 @socketio.on('send_message')
 def on_message(data):
-    if 'user_id' not in session:
-        return
+    # Lấy user từ sid_users trước, fallback về session
+    user_info = sid_users.get(request.sid)
+    if not user_info:
+        if 'user_id' not in session:
+            return
+        user_info = {'user_id': session['user_id'], 'username': session['username']}
+        sid_users[request.sid] = user_info
+
+    uid = user_info['user_id']
+    uname = user_info['username']
     room_id = data.get('room_id')
     content = data.get('content', '').strip()
     msg_type = data.get('type', 'text')
+
     if not content and msg_type == 'text':
         return
+    if not room_id:
+        return
 
-    # Emit TRƯỚC để client nhận ngay lập tức, không chờ DB
-    temp_id = str(uuid.uuid4().hex[:8])
-    now_str = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
-    emit('new_message', {
-        'id': temp_id, 'room_id': room_id, 'content': content, 'type': msg_type,
-        'username': session['username'], 'user_id': session['user_id'],
-        'created_at': now_str, 'reactions': '[]'
-    }, room=str(room_id))
-
-    # Lưu DB sau (không block emit)
+    # Lưu DB trước để lấy id thật
     try:
         db = get_db(); cur = db.cursor()
         if DATABASE_URL:
             cur.execute(f'INSERT INTO messages (room_id, user_id, content, type) VALUES ({PH},{PH},{PH},{PH}) RETURNING id',
-                        (room_id, session['user_id'], content, msg_type))
+                        (room_id, uid, content, msg_type))
+            msg_id = cur.fetchone()[0]
         else:
             cur.execute(f'INSERT INTO messages (room_id, user_id, content, type) VALUES ({PH},{PH},{PH},{PH})',
-                        (room_id, session['user_id'], content, msg_type))
+                        (room_id, uid, content, msg_type))
+            msg_id = cur.lastrowid
         db.commit(); cur.close(); release_db(db)
     except Exception as e:
         print(f'DB save error: {e}')
+        return
+
+    # Emit sau khi DB thành công
+    now_str = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+    emit('new_message', {
+        'id': msg_id, 'room_id': room_id, 'content': content, 'type': msg_type,
+        'username': uname, 'user_id': uid,
+        'created_at': now_str, 'reactions': '[]'
+    }, room=str(room_id))
 
 @socketio.on('react_message')
 def on_react(data):
-    if 'user_id' not in session:
+    user_info = sid_users.get(request.sid)
+    if not user_info and 'user_id' not in session:
         return
+    if not user_info:
+        user_info = {'user_id': session['user_id'], 'username': session['username']}
     msg_id = data['message_id']
     emoji = data['emoji']
     room_id = data['room_id']
+    uid = user_info['user_id']
     db = get_db(); cur = db.cursor()
     cur.execute(f'SELECT emoji FROM reactions WHERE message_id={PH} AND user_id={PH}',
-                (msg_id, session['user_id']))
+                (msg_id, uid))
     existing = dict_row(cur)
     if existing and existing['emoji'] == emoji:
         cur.execute(f'DELETE FROM reactions WHERE message_id={PH} AND user_id={PH}',
-                    (msg_id, session['user_id']))
+                    (msg_id, uid))
     else:
         if DATABASE_URL:
             cur.execute(f'INSERT INTO reactions (message_id, user_id, emoji) VALUES ({PH},{PH},{PH}) ON CONFLICT (message_id, user_id) DO UPDATE SET emoji={PH}',
-                        (msg_id, session['user_id'], emoji, emoji))
+                        (msg_id, uid, emoji, emoji))
         else:
             cur.execute(f'INSERT OR REPLACE INTO reactions (message_id, user_id, emoji) VALUES ({PH},{PH},{PH})',
-                        (msg_id, session['user_id'], emoji))
+                        (msg_id, uid, emoji))
     db.commit()
     cur.execute(f'SELECT emoji, user_id FROM reactions WHERE message_id={PH}', (msg_id,))
     reactions = dict_rows(cur)
@@ -633,19 +659,25 @@ def on_react(data):
 
 @socketio.on('typing')
 def on_typing(data):
-    emit('user_typing', {'username': session.get('username'), 'typing': data.get('typing')},
+    user_info = sid_users.get(request.sid, {})
+    uname = user_info.get('username') or session.get('username', '')
+    emit('user_typing', {'username': uname, 'typing': data.get('typing')},
          room=str(data.get('room_id')), include_self=False)
 
 @socketio.on('delete_message')
 def on_delete(data):
-    if 'user_id' not in session:
+    user_info = sid_users.get(request.sid)
+    if not user_info and 'user_id' not in session:
         return
+    if not user_info:
+        user_info = {'user_id': session['user_id'], 'username': session['username']}
+    uid = user_info['user_id']
     msg_id = data['message_id']
     room_id = data['room_id']
     db = get_db(); cur = db.cursor()
     cur.execute(f'SELECT user_id FROM messages WHERE id={PH}', (msg_id,))
     msg = dict_row(cur)
-    if not msg or msg['user_id'] != session['user_id']:
+    if not msg or msg['user_id'] != uid:
         cur.close(); release_db(db); return
     cur.execute(f"UPDATE messages SET deleted=1, content='Tin nhắn đã bị xoá' WHERE id={PH}", (msg_id,))
     db.commit(); cur.close(); release_db(db)
@@ -653,7 +685,8 @@ def on_delete(data):
 
 @socketio.on('pin_message')
 def on_pin(data):
-    if 'user_id' not in session:
+    user_info = sid_users.get(request.sid)
+    if not user_info and 'user_id' not in session:
         return
     msg_id = data['message_id']
     room_id = data['room_id']
@@ -673,20 +706,25 @@ def on_pin(data):
 
 @socketio.on('mark_read')
 def on_mark_read(data):
-    if 'user_id' not in session:
+    user_info = sid_users.get(request.sid)
+    if not user_info and 'user_id' not in session:
         return
+    if not user_info:
+        user_info = {'user_id': session['user_id'], 'username': session['username']}
+    uid = user_info['user_id']
+    uname = user_info['username']
     room_id = data['room_id']
     msg_id = data.get('msg_id', 0)
     db = get_db(); cur = db.cursor()
     if DATABASE_URL:
         cur.execute(f'INSERT INTO read_receipts (room_id, user_id, last_read_msg_id) VALUES ({PH},{PH},{PH}) ON CONFLICT (room_id, user_id) DO UPDATE SET last_read_msg_id={PH}',
-                    (room_id, session['user_id'], msg_id, msg_id))
+                    (room_id, uid, msg_id, msg_id))
     else:
         cur.execute(f'INSERT OR REPLACE INTO read_receipts (room_id, user_id, last_read_msg_id) VALUES ({PH},{PH},{PH})',
-                    (room_id, session['user_id'], msg_id))
+                    (room_id, uid, msg_id))
     db.commit(); cur.close(); release_db(db)
-    emit('read_update', {'room_id': room_id, 'user_id': session['user_id'],
-                         'username': session['username'], 'msg_id': msg_id}, room=str(room_id))
+    emit('read_update', {'room_id': room_id, 'user_id': uid,
+                         'username': uname, 'msg_id': msg_id}, room=str(room_id))
 
 if __name__ == '__main__':
     socketio.run(app, debug=True, host='0.0.0.0', port=5000)
