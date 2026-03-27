@@ -20,9 +20,10 @@ def add_headers(response):
     return response
 
 UPLOAD_FOLDER = 'static/uploads'
-ALLOWED_EXTENSIONS = {'png', 'jpg', 'jpeg', 'gif', 'webp'}
+ALLOWED_EXTENSIONS = {'png', 'jpg', 'jpeg', 'gif', 'webp', 'pdf', 'zip', 'doc', 'docx', 'xls', 'xlsx', 'txt', 'mp4', 'mp3'}
+IMAGE_EXTENSIONS = {'png', 'jpg', 'jpeg', 'gif', 'webp'}
 app.config['UPLOAD_FOLDER'] = UPLOAD_FOLDER
-app.config['MAX_CONTENT_LENGTH'] = 16 * 1024 * 1024  # 16MB
+app.config['MAX_CONTENT_LENGTH'] = 32 * 1024 * 1024  # 32MB
 
 DATABASE_URL = os.environ.get('DATABASE_URL')
 
@@ -149,6 +150,9 @@ def hash_password(pw):
 
 def allowed_file(filename):
     return '.' in filename and filename.rsplit('.', 1)[1].lower() in ALLOWED_EXTENSIONS
+
+def is_image(filename):
+    return '.' in filename and filename.rsplit('.', 1)[1].lower() in IMAGE_EXTENSIONS
 
 init_db()
 
@@ -355,13 +359,21 @@ def upload_file():
     if 'file' not in request.files:
         return jsonify({'error': 'No file'}), 400
     file = request.files['file']
-    if file and allowed_file(file.filename):
-        ext = file.filename.rsplit('.', 1)[1].lower()
-        filename = f"{uuid.uuid4().hex}.{ext}"
-        os.makedirs(app.config['UPLOAD_FOLDER'], exist_ok=True)
-        file.save(os.path.join(app.config['UPLOAD_FOLDER'], filename))
-        return jsonify({'url': f'/static/uploads/{filename}'})
-    return jsonify({'error': 'File không hợp lệ'}), 400
+    if not file or not file.filename:
+        return jsonify({'error': 'File trống'}), 400
+    if not allowed_file(file.filename):
+        return jsonify({'error': 'Loại file không được hỗ trợ'}), 400
+    ext = file.filename.rsplit('.', 1)[1].lower()
+    original_name = secure_filename(file.filename)
+    filename = f"{uuid.uuid4().hex}.{ext}"
+    os.makedirs(app.config['UPLOAD_FOLDER'], exist_ok=True)
+    file.save(os.path.join(app.config['UPLOAD_FOLDER'], filename))
+    file_type = 'image' if is_image(file.filename) else 'file'
+    return jsonify({
+        'url': f'/static/uploads/{filename}',
+        'type': file_type,
+        'original_name': original_name
+    })
 
 @app.route('/api/users')
 def get_users():

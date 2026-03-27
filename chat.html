@@ -143,40 +143,24 @@ body { font-family: var(--font); background: var(--bg); color: var(--text); }
 .room-preview { color: var(--muted); font-size: 0.8rem; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; margin-top: 2px; }
 
 .sidebar-footer {
-  padding: 12px 14px;
+  padding: 14px 14px;
   border-top: 1px solid var(--border);
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  width: 300px;
-  box-sizing: border-box;
-  overflow: hidden;
+  display: flex; align-items: center; gap: 10px;
 }
 .user-avatar {
-  width: 32px; height: 32px;
+  width: 36px; height: 36px;
   border-radius: 50%;
   background: linear-gradient(135deg, var(--accent2), var(--accent));
   display: flex; align-items: center; justify-content: center;
-  font-weight: 700; font-size: 0.85rem; color: #fff;
-  flex-shrink: 0;
+  font-weight: 700; font-size: 0.9rem; color: #fff; flex-shrink: 0;
 }
-.user-name {
-  font-weight: 600;
-  font-size: 0.82rem;
-  flex: 1;
-  min-width: 0;
-  max-width: 180px;
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
-.online-dot { width: 7px; height: 7px; border-radius: 50%; background: #4cdb7a; flex-shrink: 0; }
+.user-name { font-weight: 600; font-size: 0.9rem; flex: 1; }
+.online-dot { width: 8px; height: 8px; border-radius: 50%; background: #4cdb7a; }
+
 .logout-btn {
   background: none; border: none; color: var(--muted);
-  cursor: pointer; padding: 5px 7px; border-radius: 8px;
+  cursor: pointer; padding: 6px; border-radius: 8px;
   transition: color 0.2s, background 0.2s; font-size: 1rem;
-  flex-shrink: 0;
-  margin-left: auto;
 }
 .logout-btn:hover { color: var(--accent2); background: rgba(240,96,144,0.1); }
 
@@ -251,6 +235,7 @@ body { font-family: var(--font); background: var(--bg); color: var(--text); }
 .bubble.img-bubble { padding: 4px; background: transparent !important; }
 .bubble.img-bubble img { max-width: 260px; max-height: 220px; border-radius: 14px; display: block; }
 .bubble.sticker-bubble { padding: 0; background: transparent !important; font-size: 3rem; line-height: 1; }
+.bubble.file-bubble { padding: 10px 14px; }
 
 .msg-time { font-size: 0.7rem; color: var(--muted); padding: 0 4px; white-space: nowrap; }
 
@@ -348,7 +333,7 @@ body.light {
   --surface2: #ebebf3;
   --border: #dddde8;
   --text: #1a1a2e;
-  --muted: #6666880;
+  --muted: #666688;
   --bubble-them: #e8e8f0;
 }
 
@@ -496,7 +481,6 @@ body.light {
   flex: 1; display: flex; flex-direction: column;
   align-items: center; justify-content: center;
   color: var(--muted); text-align: center; gap: 16px;
-  pointer-events: none;
 }
 .welcome .big-icon { font-size: 4rem; }
 .welcome h2 { font-family: var(--font-display); font-size: 1.5rem; color: var(--text); }
@@ -576,7 +560,7 @@ body.light {
   </div>
 </div>
 
-<input type="file" id="fileInput" accept="image/*" onchange="uploadImage(this)">
+<input type="file" id="fileInput" accept="*/*" onchange="uploadFile(this)">
 
 <!-- Context menu -->
 <div class="ctx-menu" id="ctxMenu" style="display:none">
@@ -598,21 +582,13 @@ let online_users = {};
 
 // ─── INIT ───────────────────────────────────────────────────────────────────
 
-// Cache tin nhắn theo room_id
-const msgCache = {};
-
 async function init() {
-  // 1 request thay vì 3
-  const res = await fetch('/api/init');
-  const data = await res.json();
-  me = data.me;
-  stickers = data.stickers;
-  const nameEl = document.getElementById('myName');
-  nameEl.textContent = me.username;
-  nameEl.title = me.username;
+  const res = await fetch('/api/me');
+  me = await res.json();
+  document.getElementById('myName').textContent = me.username;
   document.getElementById('myAvatar').textContent = me.username[0].toUpperCase();
-  rooms = data.rooms;
-  renderRooms(rooms);
+  await loadRooms();
+  await loadStickers();
 }
 
 async function loadRooms() {
@@ -621,24 +597,7 @@ async function loadRooms() {
   renderRooms(rooms);
 }
 
-function renderRooms(list) {
-  const el = document.getElementById('roomsList');
-  el.innerHTML = '';
-  list.forEach(r => {
-    const item = document.createElement('div');
-    item.className = 'room-item' + (currentRoom?.id === r.id ? ' active' : '');
-    item.dataset.id = r.id;
-    const preview = r.last_msg || 'Chưa có tin nhắn';
-    item.innerHTML = `
-      <div class="room-avatar">${r.name[0].toUpperCase()}</div>
-      <div class="room-info">
-        <div class="room-name">${escHtml(r.name)}</div>
-        <div class="room-preview">${escHtml(preview.length > 28 ? preview.slice(0, 28) + '…' : preview)}</div>
-      </div>`;
-    item.onclick = () => openRoom(r);
-    el.appendChild(item);
-  });
-}
+// renderRooms defined below with full features
 
 function filterRooms(q) {
   const filtered = q ? rooms.filter(r => r.name.toLowerCase().includes(q.toLowerCase())) : rooms;
@@ -809,7 +768,7 @@ function handleSearch(q) {
 // ─── OPEN ROOM ───────────────────────────────────────────────────────────────
 
 async function openRoom(room) {
-  if (currentRoom && currentRoom.id === room.id) return; // đã ở phòng này rồi
+  room.id = parseInt(room.id);  // đảm bảo luôn là số
   if (currentRoom) socket.emit('leave_room', { room_id: currentRoom.id });
   currentRoom = room;
 
@@ -837,7 +796,7 @@ async function openRoom(room) {
     </div>
     <div class="typing-indicator" id="typingIndicator"></div>
     <div class="input-area">
-      <button class="tool-btn" onclick="document.getElementById('fileInput').click()" title="Gửi ảnh">🖼️</button>
+      <button class="tool-btn" onclick="document.getElementById('fileInput').click()" title="Gửi file/ảnh">📎</button>
       <button class="tool-btn" onclick="toggleSticker()" title="Sticker">😊</button>
       <div class="msg-input-wrap">
         <textarea class="msg-input" id="msgInput" rows="1" placeholder="Nhập tin nhắn..." 
@@ -848,14 +807,8 @@ async function openRoom(room) {
 
   socket.emit('join_room', { room_id: room.id });
 
-  // Dùng cache nếu có, load nhanh hơn
-  if (msgCache[room.id]) {
-    renderMessages(msgCache[room.id]);
-  } else {
-    const msgs = await fetch(`/api/rooms/${room.id}/messages`).then(r => r.json());
-    msgCache[room.id] = msgs;
-    renderMessages(msgs);
-  }
+  const msgs = await fetch(`/api/rooms/${room.id}/messages`).then(r => r.json());
+  renderMessages(msgs);
   document.getElementById('msgInput').focus();
 }
 
@@ -913,9 +866,18 @@ function appendMessage(m, prevUserId = null, scroll = true) {
 
   let bubbleContent = '';
   if (m.type === 'image') {
-    bubbleContent = `<div class="bubble img-bubble" data-id="${m.id}"><img src="${escHtml(m.content)}" alt="img" loading="lazy"></div>`;
+    bubbleContent = `<div class="bubble img-bubble" data-id="${m.id}"><img src="${escHtml(m.content)}" alt="img" loading="lazy" onclick="window.open('${escHtml(m.content)}','_blank')"></div>`;
   } else if (m.type === 'sticker') {
     bubbleContent = `<div class="bubble sticker-bubble" data-id="${m.id}">${escHtml(m.content)}</div>`;
+  } else if (m.type === 'file') {
+    let fileInfo = { url: m.content, name: 'File' };
+    try { fileInfo = JSON.parse(m.content); } catch {}
+    bubbleContent = `<div class="bubble file-bubble" data-id="${m.id}">
+      <a href="${escHtml(fileInfo.url)}" target="_blank" download="${escHtml(fileInfo.name)}" style="display:flex;align-items:center;gap:8px;color:inherit;text-decoration:none">
+        <span style="font-size:1.4rem">📄</span>
+        <span style="text-decoration:underline;word-break:break-all">${escHtml(fileInfo.name)}</span>
+      </a>
+    </div>`;
   } else {
     bubbleContent = `<div class="bubble${m.deleted ? ' deleted' : ''}" data-id="${m.id}">${escHtml(m.content)}</div>`;
   }
@@ -1007,22 +969,41 @@ function emitTyping() {
   }, 1500);
 }
 
-async function uploadImage(input) {
+async function uploadFile(input) {
   if (!input.files[0] || !currentRoom) return;
-  const form = new FormData();
-  form.append('file', input.files[0]);
-  const res = await fetch('/api/upload', { method: 'POST', body: form });
-  const data = await res.json();
-  if (data.url) {
-    socket.emit('send_message', { room_id: currentRoom.id, content: data.url, type: 'image' });
+  const file = input.files[0];
+  
+  // Show uploading indicator
+  const sendBtn = document.querySelector('.send-btn');
+  const origText = sendBtn ? sendBtn.innerHTML : '';
+  if (sendBtn) { sendBtn.innerHTML = '⏳'; sendBtn.disabled = true; }
+  
+  try {
+    const form = new FormData();
+    form.append('file', file);
+    const res = await fetch('/api/upload', { method: 'POST', body: form });
+    const data = await res.json();
+    
+    if (data.error) {
+      alert('Lỗi upload: ' + data.error);
+    } else if (data.url) {
+      const msgType = data.type === 'image' ? 'image' : 'file';
+      const content = msgType === 'file' 
+        ? JSON.stringify({ url: data.url, name: data.original_name }) 
+        : data.url;
+      socket.emit('send_message', { room_id: currentRoom.id, content, type: msgType });
+    }
+  } catch (err) {
+    alert('Lỗi kết nối khi upload file');
+  } finally {
+    if (sendBtn) { sendBtn.innerHTML = origText; sendBtn.disabled = false; }
+    input.value = '';
   }
-  input.value = '';
 }
 
 // ─── STICKER ─────────────────────────────────────────────────────────────
 
 async function loadStickers() {
-  if (Object.keys(stickers).length > 0) return; // đã có rồi
   stickers = await fetch('/api/stickers').then(r => r.json());
 }
 
@@ -1090,17 +1071,27 @@ function sendReactionDirect(msgId, emoji) {
 // ─── SOCKET EVENTS ────────────────────────────────────────────────────────
 
 socket.on('new_message', (msg) => {
-  // Cập nhật cache
-  if (msgCache[msg.room_id]) msgCache[msg.room_id].push(msg);
-  if (!currentRoom || msg.room_id !== currentRoom.id) return;
-  const wrap = document.getElementById('msgsWrap');
-  const lastGroup = wrap?.querySelector('.msg-group:last-child');
-  appendMessage(msg, lastGroup ? +lastGroup.dataset.uid : null);
+  // Update room preview regardless
   updateRoomPreview(msg.room_id, msg.content);
+  // Append to chat if in the same room
+  if (currentRoom && parseInt(msg.room_id) === parseInt(currentRoom.id)) {
+    const wrap = document.getElementById('msgsWrap');
+    const lastGroup = wrap?.querySelector('.msg-group:last-child');
+    appendMessage(msg, lastGroup ? +lastGroup.dataset.uid : null);
+  } else {
+    // Add unread badge for other rooms
+    unreadCounts[msg.room_id] = (unreadCounts[msg.room_id] || 0) + 1;
+    renderRooms(rooms);
+    // Browser notification
+    if (Notification.permission === 'granted' && document.hidden) {
+      new Notification(`VibChat - ${msg.username}`, { body: msg.content, icon: '/static/icon.png' });
+    }
+  }
 });
 
 socket.on('reaction_update', (data) => {
   if (!currentRoom) return;
+  // data.message_id may be in current room
   const wrap = document.getElementById('msgsWrap');
   const row = wrap?.querySelector(`[data-msg-id="${data.message_id}"]`);
   const group = row?.closest('.msg-group') || wrap?.querySelector(`.msg-group:has([data-id="${data.message_id}"])`);
@@ -1125,28 +1116,6 @@ socket.on('online_users', (users_list) => {
   if (currentTab === 'dm') renderUsers(users);
 });
 
-// Keep-alive: ping server mỗi 4 phút để Railway không ngủ
-setInterval(() => fetch('/ping').catch(()=>{}), 4 * 60 * 1000);
-
-socket.on('friend_request', (data) => {
-  showToast(`👋 ${data.from_username} muốn kết bạn với bạn!`);
-  if (currentTab === 'dm') loadUsers();
-});
-
-function showToast(msg) {
-  let toast = document.getElementById('toastNotif');
-  if (!toast) {
-    toast = document.createElement('div');
-    toast.id = 'toastNotif';
-    toast.style.cssText = 'position:fixed;top:20px;right:20px;z-index:9999;background:#7c6ef0;color:#fff;padding:14px 20px;border-radius:12px;font-size:0.95rem;box-shadow:0 4px 20px rgba(0,0,0,0.4);transition:opacity 0.4s;max-width:300px;';
-    document.body.appendChild(toast);
-  }
-  toast.textContent = msg;
-  toast.style.opacity = '1';
-  clearTimeout(toast._t);
-  toast._t = setTimeout(() => { toast.style.opacity = '0'; }, 4000);
-}
-
 // ─── ROOMS ────────────────────────────────────────────────────────────────
 
 function showNewRoomModal() { document.getElementById('newRoomModal').classList.add('show'); document.getElementById('newRoomName').focus(); }
@@ -1164,6 +1133,7 @@ async function createRoom() {
 }
 
 function updateRoomPreview(roomId, preview) {
+  roomId = parseInt(roomId);
   rooms = rooms.map(r => r.id === roomId ? { ...r, last_msg: preview } : r);
   renderRooms(rooms);
 }
@@ -1253,13 +1223,13 @@ function updatePinnedBar(pinned) {
 // Notification
 let unreadCounts = {};
 function addUnread(roomId) {
+  roomId = parseInt(roomId);
   if (currentRoom && currentRoom.id === roomId) return;
   unreadCounts[roomId] = (unreadCounts[roomId] || 0) + 1;
   renderRooms(rooms);
 }
 
-// Override renderRooms to show badges
-const _origRenderRooms = renderRooms;
+// renderRooms with badges
 function renderRooms(list) {
   const el = document.getElementById('roomsList');
   el.innerHTML = '';
@@ -1288,12 +1258,12 @@ socket.on('message_deleted', (data) => {
 });
 
 socket.on('pin_update', (data) => {
-  if (!currentRoom || data.room_id !== currentRoom.id) return;
+  if (!currentRoom || parseInt(data.room_id) !== parseInt(currentRoom.id)) return;
   updatePinnedBar(data.pinned);
 });
 
 socket.on('read_update', (data) => {
-  if (!currentRoom || data.room_id !== currentRoom.id) return;
+  if (!currentRoom || parseInt(data.room_id) !== parseInt(currentRoom.id)) return;
   // Show "Đã xem" under last message
   document.querySelectorAll('.read-receipt').forEach(el => el.remove());
   if (data.user_id !== me.id) {
@@ -1307,14 +1277,8 @@ socket.on('read_update', (data) => {
   }
 });
 
-// Browser notification
+// Request notification permission once
 if (Notification.permission === 'default') Notification.requestPermission();
-socket.on('new_message', (msg) => {
-  if (currentRoom && msg.room_id === currentRoom.id) return;
-  if (Notification.permission === 'granted' && document.hidden) {
-    new Notification(`VibChat - ${msg.username}`, { body: msg.content, icon: '/static/icon.png' });
-  }
-});
 
 
 init();
