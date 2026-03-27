@@ -124,13 +124,6 @@ def init_db():
     db.commit()
     cur.close()
     db.close()
-        # Seed default rooms
-        existing = db.execute('SELECT COUNT(*) as c FROM rooms').fetchone()['c']
-        if existing == 0:
-            db.execute("INSERT INTO rooms (name, type, created_by) VALUES ('General', 'group', 1)")
-            db.execute("INSERT INTO rooms (name, type, created_by) VALUES ('Random', 'group', 1)")
-            db.execute("INSERT INTO rooms (name, type, created_by) VALUES ('Dev Talk', 'group', 1)")
-            db.commit()
 
 def hash_password(pw):
     return hashlib.sha256(pw.encode()).hexdigest()
