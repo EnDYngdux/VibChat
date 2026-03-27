@@ -599,7 +599,18 @@ body.light {
 </div>
 
 <script>
-const socket = io();
+const socket = io({
+  transports: ['polling', 'websocket'],  // polling trước để handshake, rồi upgrade WebSocket
+  upgrade: true,
+  reconnectionDelay: 1000,
+  reconnectionAttempts: 10,
+  timeout: 20000
+});
+
+// Debug kết nối
+socket.on('connect', () => console.log('✅ Socket connected:', socket.id));
+socket.on('connect_error', (e) => console.warn('❌ Socket error:', e.message));
+socket.on('disconnect', (reason) => console.warn('⚠️ Disconnected:', reason));
 
 let me = null;
 let currentRoom = null;
@@ -971,12 +982,16 @@ function scrollBottom() {
 function sendMsg() {
   const input = document.getElementById('msgInput');
   if (!input || !currentRoom) return;
-  const content = input.value.trim();
-  if (!content) return;
-  socket.emit('send_message', { room_id: currentRoom.id, content, type: 'text' });
+  const msgContent = input.value.trim();
+  if (!msgContent) return;
+
+  // Xóa input ngay để user thấy phản hồi tức thì
   input.value = '';
   autoResize(input);
   socket.emit('typing', { room_id: currentRoom.id, typing: false });
+
+  // Gửi lên server — server sẽ broadcast lại qua socket.on('new_message')
+  socket.emit('send_message', { room_id: currentRoom.id, content: msgContent, type: 'text' });
 }
 
 function handleKey(e) {
@@ -1338,46 +1353,7 @@ if ('IntersectionObserver' in window) {
   window._observeImg = () => {};
 }
 
-// ─── OPTIMISTIC UI: hiển thị tin nhắn ngay khi gửi (không đợi server) ─────
-const _origSendMsg = sendMsg;
-function sendMsg() {
-  const input = document.getElementById('msgInput');
-  if (!input || !currentRoom || !input.value.trim()) return;
-  
-  // Hiển thị ngay lập tức (optimistic)
-  const tempMsg = {
-    id: 'temp_' + Date.now(),
-    room_id: currentRoom.id,
-    content: input.value.trim(),
-    type: 'text',
-    username: me.username,
-    user_id: me.id,
-    created_at: new Date().toISOString(),
-    reactions: '[]',
-    deleted: 0
-  };
-  const wrap = document.getElementById('msgsWrap');
-  const lastGroup = wrap?.querySelector('.msg-group:last-child');
-  appendMessage(tempMsg, lastGroup ? +lastGroup.dataset.uid : null);
-  
-  // Gửi qua socket
-  socket.emit('send_message', { room_id: currentRoom.id, content: tempMsg.content, type: 'text' });
-  input.value = '';
-  autoResize(input);
-  socket.emit('typing', { room_id: currentRoom.id, typing: false });
-}
-
-// Khi nhận tin nhắn thật từ server, xóa tin tạm nếu là của mình
-const _origSocketMsg = socket.listeners('new_message')[0];
-socket.on('new_message', (msg) => {
-  if (parseInt(msg.user_id) === parseInt(me?.id) && currentRoom && parseInt(msg.room_id) === parseInt(currentRoom.id)) {
-    // Xóa bubble tạm (nếu có)
-    const tempBubbles = document.querySelectorAll('[data-id^="temp_"]');
-    if (tempBubbles.length > 0) {
-      tempBubbles[tempBubbles.length - 1]?.closest('.bubble-row')?.remove();
-    }
-  }
-});
+// sendMsg dùng bản gốc bên trên, không override
 
 // ─── SCROLL TO BOTTOM nhanh hơn ───────────────────────────────────────────
 function scrollBottom() {

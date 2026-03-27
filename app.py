@@ -9,7 +9,8 @@ app.secret_key = os.environ.get('SECRET_KEY', 'change-this-in-production-please'
 socketio = SocketIO(app, cors_allowed_origins="*", async_mode='eventlet',
                     ping_timeout=60, ping_interval=25,
                     logger=False, engineio_logger=False,
-                    max_http_buffer_size=5 * 1024 * 1024)
+                    max_http_buffer_size=5 * 1024 * 1024,
+                    allow_upgrades=True)
 
 @app.after_request
 def add_headers(response):
@@ -580,21 +581,28 @@ def on_message(data):
     msg_type = data.get('type', 'text')
     if not content and msg_type == 'text':
         return
-    db = get_db(); cur = db.cursor()
-    if DATABASE_URL:
-        cur.execute(f'INSERT INTO messages (room_id, user_id, content, type) VALUES ({PH},{PH},{PH},{PH}) RETURNING id',
-                    (room_id, session['user_id'], content, msg_type))
-        msg_id = cur.fetchone()[0]
-    else:
-        cur.execute(f'INSERT INTO messages (room_id, user_id, content, type) VALUES ({PH},{PH},{PH},{PH})',
-                    (room_id, session['user_id'], content, msg_type))
-        msg_id = cur.lastrowid
-    db.commit(); cur.close(); release_db(db)
+
+    # Emit TRƯỚC để client nhận ngay lập tức, không chờ DB
+    temp_id = str(uuid.uuid4().hex[:8])
+    now_str = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
     emit('new_message', {
-        'id': msg_id, 'room_id': room_id, 'content': content, 'type': msg_type,
+        'id': temp_id, 'room_id': room_id, 'content': content, 'type': msg_type,
         'username': session['username'], 'user_id': session['user_id'],
-        'created_at': datetime.now().strftime('%Y-%m-%d %H:%M:%S'), 'reactions': '[]'
+        'created_at': now_str, 'reactions': '[]'
     }, room=str(room_id))
+
+    # Lưu DB sau (không block emit)
+    try:
+        db = get_db(); cur = db.cursor()
+        if DATABASE_URL:
+            cur.execute(f'INSERT INTO messages (room_id, user_id, content, type) VALUES ({PH},{PH},{PH},{PH}) RETURNING id',
+                        (room_id, session['user_id'], content, msg_type))
+        else:
+            cur.execute(f'INSERT INTO messages (room_id, user_id, content, type) VALUES ({PH},{PH},{PH},{PH})',
+                        (room_id, session['user_id'], content, msg_type))
+        db.commit(); cur.close(); release_db(db)
+    except Exception as e:
+        print(f'DB save error: {e}')
 
 @socketio.on('react_message')
 def on_react(data):
