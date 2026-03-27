@@ -1090,6 +1090,9 @@ socket.on('online_users', (users_list) => {
   if (currentTab === 'dm') renderUsers(users);
 });
 
+// Keep-alive: ping server mỗi 4 phút để Railway không ngủ
+setInterval(() => fetch('/ping').catch(()=>{}), 4 * 60 * 1000);
+
 socket.on('friend_request', (data) => {
   showToast(`👋 ${data.from_username} muốn kết bạn với bạn!`);
   if (currentTab === 'dm') loadUsers();

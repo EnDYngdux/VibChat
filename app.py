@@ -6,7 +6,18 @@ from werkzeug.utils import secure_filename
 
 app = Flask(__name__)
 app.secret_key = os.environ.get('SECRET_KEY', 'change-this-in-production-please')
-socketio = SocketIO(app, cors_allowed_origins="*", async_mode='eventlet')
+socketio = SocketIO(app, cors_allowed_origins="*", async_mode='eventlet',
+                    ping_timeout=20, ping_interval=10,
+                    logger=False, engineio_logger=False)
+
+@app.after_request
+def add_headers(response):
+    # Cache static assets
+    if request.path.startswith('/static/'):
+        response.headers['Cache-Control'] = 'public, max-age=31536000'
+    else:
+        response.headers['Cache-Control'] = 'no-cache, no-store, must-revalidate'
+    return response
 
 UPLOAD_FOLDER = 'static/uploads'
 ALLOWED_EXTENSIONS = {'png', 'jpg', 'jpeg', 'gif', 'webp'}
@@ -20,10 +31,15 @@ DATABASE_URL = os.environ.get('DATABASE_URL')
 if DATABASE_URL:
     import psycopg2
     import psycopg2.extras
+    from psycopg2 import pool as pg_pool
+
+    _db_pool = pg_pool.ThreadedConnectionPool(1, 10, DATABASE_URL)
 
     def get_db():
-        conn = psycopg2.connect(DATABASE_URL)
-        return conn
+        return _db_pool.getconn()
+
+    def release_db(conn):
+        _db_pool.putconn(conn)
 
     def dict_rows(cursor):
         cols = [d[0] for d in cursor.description]
@@ -52,6 +68,9 @@ else:
         return dict(r) if r else None
 
     PH = '?'  # SQLite placeholder
+
+    def release_db(conn):
+        conn.close()
 
 def init_db():
     db = get_db()
@@ -135,6 +154,10 @@ init_db()
 
 # ─── ROUTES ───────────────────────────────────────────────────────────────────
 
+@app.route('/ping')
+def ping():
+    return 'pong', 200
+
 @app.route('/')
 def index():
     if 'user_id' not in session:
@@ -153,7 +176,7 @@ def login():
         cur.execute(f'SELECT * FROM users WHERE username={PH} AND password={PH}',
                     (username, hash_password(password)))
         user = dict_row(cur)
-        cur.close(); db.close()
+        cur.close(); release_db(db)
         if not user:
             return jsonify({'error': 'Sai tên đăng nhập hoặc mật khẩu'}), 401
         session['user_id'] = user['id']
@@ -191,7 +214,7 @@ def register():
                     cur.execute(f'INSERT INTO room_members (room_id, user_id) VALUES ({PH},{PH})',
                                 (r['id'], user['id']))
                 except: pass
-            db.commit(); cur.close(); db.close()
+            db.commit(); cur.close(); release_db(db)
             session['user_id'] = user['id']
             session['username'] = username
             return jsonify({'ok': True})
@@ -227,7 +250,7 @@ def get_rooms():
         ORDER BY last_time DESC NULLS LAST
     ''', (session['user_id'],))
     rooms = dict_rows(cur)
-    cur.close(); db.close()
+    cur.close(); release_db(db)
     return jsonify(rooms)
 
 @app.route('/api/rooms', methods=['POST'])
@@ -249,7 +272,7 @@ def create_room():
         room_id = cur.lastrowid
     cur.execute(f'INSERT INTO room_members (room_id, user_id) VALUES ({PH},{PH})',
                 (room_id, session['user_id']))
-    db.commit(); cur.close(); db.close()
+    db.commit(); cur.close(); release_db(db)
     return jsonify({'id': room_id, 'name': name})
 
 @app.route('/api/rooms/<int:room_id>/messages')
@@ -285,7 +308,7 @@ def get_messages(room_id):
                     (room_id, session['user_id']))
         db.commit()
     except: db.rollback() if DATABASE_URL else None
-    cur.close(); db.close()
+    cur.close(); release_db(db)
     return jsonify(msgs)
 
 @app.route('/api/upload', methods=['POST'])
@@ -329,7 +352,7 @@ def get_users():
             if fs['status'] == 'pending' and fs['sender_id'] != session['user_id']:
                 status = 'incoming'
         result.append({'id': u['id'], 'username': u['username'], 'friend_status': status})
-    cur.close(); db.close()
+    cur.close(); release_db(db)
     return jsonify(result)
 
 @app.route('/api/friends')
@@ -345,7 +368,7 @@ def get_friends():
         AND u.id != {PH}
     ''', (session['user_id'], session['user_id'], session['user_id']))
     friends = dict_rows(cur)
-    cur.close(); db.close()
+    cur.close(); release_db(db)
     return jsonify(friends)
 
 @app.route('/api/friend/request/<int:other_id>', methods=['POST'])
@@ -356,7 +379,7 @@ def send_friend_request(other_id):
         db = get_db(); cur = db.cursor()
         cur.execute(f'INSERT INTO friendships (sender_id, receiver_id, status) VALUES ({PH},{PH},{PH})',
                     (session['user_id'], other_id, 'pending'))
-        db.commit(); cur.close(); db.close()
+        db.commit(); cur.close(); release_db(db)
         # Thông báo realtime cho người nhận nếu đang online
         if other_id in user_sids:
             socketio.emit('friend_request', {
@@ -374,7 +397,7 @@ def accept_friend(other_id):
     db = get_db(); cur = db.cursor()
     cur.execute(f"UPDATE friendships SET status='accepted' WHERE sender_id={PH} AND receiver_id={PH}",
                 (other_id, session['user_id']))
-    db.commit(); cur.close(); db.close()
+    db.commit(); cur.close(); release_db(db)
     return jsonify({'ok': True})
 
 @app.route('/api/friend/decline/<int:other_id>', methods=['POST'])
@@ -384,7 +407,7 @@ def decline_friend(other_id):
     db = get_db(); cur = db.cursor()
     cur.execute(f'DELETE FROM friendships WHERE (sender_id={PH} AND receiver_id={PH}) OR (sender_id={PH} AND receiver_id={PH})',
                 (other_id, session['user_id'], session['user_id'], other_id))
-    db.commit(); cur.close(); db.close()
+    db.commit(); cur.close(); release_db(db)
     return jsonify({'ok': True})
 
 @app.route('/api/friend/requests')
@@ -397,7 +420,7 @@ def get_friend_requests():
         WHERE f.receiver_id={PH} AND f.status='pending'
     ''', (session['user_id'],))
     reqs = dict_rows(cur)
-    cur.close(); db.close()
+    cur.close(); release_db(db)
     return jsonify(reqs)
 
 @app.route('/api/dm/<int:other_id>')
@@ -415,14 +438,14 @@ def get_or_create_dm(other_id):
     ''', (me_id, other_id))
     existing = dict_row(cur)
     if existing:
-        cur.close(); db.close()
+        cur.close(); release_db(db)
         return jsonify({'id': existing['id'], 'name': existing['name'], 'type': 'dm'})
     cur.execute(f'SELECT username FROM users WHERE id = {PH}', (other_id,))
     other = dict_row(cur)
     cur.execute(f'SELECT username FROM users WHERE id = {PH}', (me_id,))
     my = dict_row(cur)
     if not other or not my:
-        cur.close(); db.close()
+        cur.close(); release_db(db)
         return jsonify({'error': 'User not found'}), 404
     room_name = f"{my['username']},{other['username']}"
     if DATABASE_URL:
@@ -435,7 +458,7 @@ def get_or_create_dm(other_id):
         room_id = cur.lastrowid
     cur.execute(f'INSERT INTO room_members (room_id, user_id) VALUES ({PH},{PH})', (room_id, me_id))
     cur.execute(f'INSERT INTO room_members (room_id, user_id) VALUES ({PH},{PH})', (room_id, other_id))
-    db.commit(); cur.close(); db.close()
+    db.commit(); cur.close(); release_db(db)
     return jsonify({'id': room_id, 'name': room_name, 'type': 'dm'})
 
 @app.route('/api/stickers')
@@ -493,7 +516,7 @@ def on_message(data):
         cur.execute(f'INSERT INTO messages (room_id, user_id, content, type) VALUES ({PH},{PH},{PH},{PH})',
                     (room_id, session['user_id'], content, msg_type))
         msg_id = cur.lastrowid
-    db.commit(); cur.close(); db.close()
+    db.commit(); cur.close(); release_db(db)
     emit('new_message', {
         'id': msg_id, 'room_id': room_id, 'content': content, 'type': msg_type,
         'username': session['username'], 'user_id': session['user_id'],
@@ -524,7 +547,7 @@ def on_react(data):
     db.commit()
     cur.execute(f'SELECT emoji, user_id FROM reactions WHERE message_id={PH}', (msg_id,))
     reactions = dict_rows(cur)
-    cur.close(); db.close()
+    cur.close(); release_db(db)
     emit('reaction_update', {'message_id': msg_id, 'reactions': reactions}, room=str(room_id))
 
 @socketio.on('typing')
@@ -542,9 +565,9 @@ def on_delete(data):
     cur.execute(f'SELECT user_id FROM messages WHERE id={PH}', (msg_id,))
     msg = dict_row(cur)
     if not msg or msg['user_id'] != session['user_id']:
-        cur.close(); db.close(); return
+        cur.close(); release_db(db); return
     cur.execute(f"UPDATE messages SET deleted=1, content='Tin nhắn đã bị xoá' WHERE id={PH}", (msg_id,))
-    db.commit(); cur.close(); db.close()
+    db.commit(); cur.close(); release_db(db)
     emit('message_deleted', {'message_id': msg_id}, room=str(room_id))
 
 @socketio.on('pin_message')
@@ -557,14 +580,14 @@ def on_pin(data):
     cur.execute(f'SELECT pinned FROM messages WHERE id={PH}', (msg_id,))
     msg = dict_row(cur)
     if not msg:
-        cur.close(); db.close(); return
+        cur.close(); release_db(db); return
     new_pin = 0 if msg['pinned'] else 1
     cur.execute(f'UPDATE messages SET pinned={PH} WHERE id={PH}', (new_pin, msg_id))
     cur.execute(f'''SELECT m.id, m.content, m.type, u.username
                    FROM messages m JOIN users u ON u.id=m.user_id
                    WHERE m.room_id={PH} AND m.pinned=1 ORDER BY m.id DESC LIMIT 1''', (room_id,))
     pinned = dict_row(cur)
-    db.commit(); cur.close(); db.close()
+    db.commit(); cur.close(); release_db(db)
     emit('pin_update', {'room_id': room_id, 'pinned': pinned}, room=str(room_id))
 
 @socketio.on('mark_read')
@@ -580,7 +603,7 @@ def on_mark_read(data):
     else:
         cur.execute(f'INSERT OR REPLACE INTO read_receipts (room_id, user_id, last_read_msg_id) VALUES ({PH},{PH},{PH})',
                     (room_id, session['user_id'], msg_id))
-    db.commit(); cur.close(); db.close()
+    db.commit(); cur.close(); release_db(db)
     emit('read_update', {'room_id': room_id, 'user_id': session['user_id'],
                          'username': session['username'], 'msg_id': msg_id}, room=str(room_id))
 
