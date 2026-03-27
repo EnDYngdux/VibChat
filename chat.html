@@ -154,7 +154,7 @@ body { font-family: var(--font); background: var(--bg); color: var(--text); }
   display: flex; align-items: center; justify-content: center;
   font-weight: 700; font-size: 0.9rem; color: #fff; flex-shrink: 0;
 }
-.user-name { font-weight: 600; font-size: 0.9rem; flex: 1; }
+.user-name { font-weight: 600; font-size: 0.9rem; flex: 1; min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .online-dot { width: 8px; height: 8px; border-radius: 50%; background: #4cdb7a; }
 
 .logout-btn {
