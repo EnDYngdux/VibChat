@@ -357,6 +357,12 @@ def send_friend_request(other_id):
         cur.execute(f'INSERT INTO friendships (sender_id, receiver_id, status) VALUES ({PH},{PH},{PH})',
                     (session['user_id'], other_id, 'pending'))
         db.commit(); cur.close(); db.close()
+        # Thông báo realtime cho người nhận nếu đang online
+        if other_id in user_sids:
+            socketio.emit('friend_request', {
+                'from_id': session['user_id'],
+                'from_username': session['username']
+            }, to=user_sids[other_id])
         return jsonify({'ok': True})
     except:
         return jsonify({'error': 'Đã gửi lời mời rồi'}), 400
@@ -444,18 +450,21 @@ def get_stickers():
 
 # ─── SOCKET EVENTS ────────────────────────────────────────────────────────────
 
-online_users = {}
+online_users = {}   # user_id -> username
+user_sids = {}      # user_id -> socket id (để gửi realtime cho đúng người)
 
 @socketio.on('connect')
 def on_connect():
     if 'user_id' in session:
         online_users[session['user_id']] = session['username']
+        user_sids[session['user_id']] = request.sid
         emit('online_users', list(online_users.values()), broadcast=True)
 
 @socketio.on('disconnect')
 def on_disconnect():
     if 'user_id' in session:
         online_users.pop(session['user_id'], None)
+        user_sids.pop(session['user_id'], None)
         emit('online_users', list(online_users.values()), broadcast=True)
 
 @socketio.on('join_room')
