@@ -515,11 +515,11 @@ body.light {
     </div>
     <div class="rooms-list" id="roomsList"></div>
     <div class="rooms-list" id="usersList" style="display:none"></div>
-    <div class="sidebar-footer">
-      <div class="user-avatar" id="myAvatar">?</div>
-      <div class="user-name" id="myName">...</div>
-      <div class="online-dot"></div>
-      <button class="logout-btn" onclick="location.href='/logout'" title="Đăng xuất">⏻</button>
+    <div class="sidebar-footer" style="display:flex;align-items:center;gap:8px;padding:14px;border-top:1px solid var(--border);overflow:hidden;min-width:0;">
+      <div class="user-avatar" id="myAvatar" style="flex-shrink:0;">?</div>
+      <div id="myName" style="flex:1;min-width:0;max-width:120px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;font-weight:600;font-size:0.85rem;">...</div>
+      <div class="online-dot" style="flex-shrink:0;"></div>
+      <button onclick="location.href='/logout'" title="Đăng xuất" style="flex-shrink:0;background:none;border:none;color:var(--muted);cursor:pointer;padding:6px;border-radius:8px;font-size:1rem;">⏻</button>
     </div>
   </aside>
 
