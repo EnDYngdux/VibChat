@@ -845,6 +845,7 @@ async function openRoom(room) {
       <button class="send-btn" onclick="sendMsg()">➤</button>
     </div>`;
 
+  console.log('🏠 join_room:', room.id);
   socket.emit('join_room', { room_id: room.id });
 
   const msgs = await fetch(`/api/rooms/${room.id}/messages`).then(r => r.json());
@@ -985,12 +986,11 @@ function sendMsg() {
   const msgContent = input.value.trim();
   if (!msgContent) return;
 
-  // Xóa input ngay để user thấy phản hồi tức thì
+  console.log('📤 sendMsg:', { room_id: currentRoom.id, content: msgContent, connected: socket.connected, sid: socket.id });
+
   input.value = '';
   autoResize(input);
   socket.emit('typing', { room_id: currentRoom.id, typing: false });
-
-  // Gửi lên server — server sẽ broadcast lại qua socket.on('new_message')
   socket.emit('send_message', { room_id: currentRoom.id, content: msgContent, type: 'text' });
 }
 
@@ -1115,6 +1115,7 @@ function sendReactionDirect(msgId, emoji) {
 // ─── SOCKET EVENTS ────────────────────────────────────────────────────────
 
 socket.on('new_message', (msg) => {
+  console.log('📨 new_message received:', msg, 'currentRoom:', currentRoom?.id);
   // Update room preview regardless
   updateRoomPreview(msg.room_id, msg.content);
   // Append to chat if in the same room

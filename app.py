@@ -553,13 +553,17 @@ sid_users = {}      # socket id -> {user_id, username} — dùng thay session tr
 
 @socketio.on('connect')
 def on_connect():
+    print(f'[CONNECT] sid={request.sid} session_keys={list(session.keys())}')
     if 'user_id' in session:
         uid = session['user_id']
         uname = session['username']
         online_users[uid] = uname
         user_sids[uid] = request.sid
         sid_users[request.sid] = {'user_id': uid, 'username': uname}
+        print(f'[CONNECT] user={uname} uid={uid} sid={request.sid}')
         emit('online_users', list(online_users.values()), broadcast=True)
+    else:
+        print(f'[CONNECT] WARNING: no session! sid={request.sid}')
 
 @socketio.on('disconnect')
 def on_disconnect():
@@ -575,7 +579,10 @@ def on_disconnect():
 
 @socketio.on('join_room')
 def on_join(data):
-    join_room(str(data['room_id']))
+    rid = str(data['room_id'])
+    join_room(rid)
+    user_info = sid_users.get(request.sid, {})
+    print(f'[JOIN_ROOM] sid={request.sid} room={rid} user={user_info.get("username","unknown")}')
 
 @socketio.on('leave_room')
 def on_leave(data):
@@ -584,9 +591,12 @@ def on_leave(data):
 @socketio.on('send_message')
 def on_message(data):
     # Lấy user từ sid_users trước, fallback về session
+    print(f'[SEND_MSG] sid={request.sid} data={data} sid_users_keys={list(sid_users.keys())[:5]}')
     user_info = sid_users.get(request.sid)
     if not user_info:
+        print(f'[SEND_MSG] no sid_users entry, checking session: {list(session.keys())}')
         if 'user_id' not in session:
+            print(f'[SEND_MSG] ERROR: no session either! dropping message')
             return
         user_info = {'user_id': session['user_id'], 'username': session['username']}
         sid_users[request.sid] = user_info
@@ -596,10 +606,12 @@ def on_message(data):
     room_id = data.get('room_id')
     content = data.get('content', '').strip()
     msg_type = data.get('type', 'text')
+    print(f'[SEND_MSG] user={uname} room={room_id} content={content[:30]}')
 
     if not content and msg_type == 'text':
         return
     if not room_id:
+        print(f'[SEND_MSG] ERROR: room_id is None!')
         return
 
     # Lưu DB trước để lấy id thật
